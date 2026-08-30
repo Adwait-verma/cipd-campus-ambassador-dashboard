@@ -26,8 +26,11 @@ export default function RegisterPage() {
     }));
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    setMessage("");
+    setSuccess(false);
 
     if (
       !form.fullName.trim() ||
@@ -51,8 +54,43 @@ export default function RegisterPage() {
       return;
     }
 
-    setMessage("");
-    setSuccess(true);
+    try {
+      const response = await fetch("http://127.0.0.1:8000/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          full_name: form.fullName,
+          email: form.email,
+          college_name: form.college,
+          graduation_year: Number(form.graduationYear),
+          password: form.password,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setMessage(data.detail || "Registration failed.");
+        return;
+      }
+
+      setSuccess(true);
+
+      setForm({
+        fullName: "",
+        email: "",
+        college: "",
+        graduationYear: "",
+        password: "",
+        confirmPassword: "",
+      });
+    } catch {
+      setMessage(
+        "Could not connect to the backend. Make sure FastAPI is running."
+      );
+    }
   }
 
   return (
@@ -98,9 +136,7 @@ export default function RegisterPage() {
                     ✓
                   </div>
 
-                  <p className="text-sm text-gray-300">
-                    {item}
-                  </p>
+                  <p className="text-sm text-gray-300">{item}</p>
                 </div>
               ))}
             </div>
@@ -259,13 +295,12 @@ export default function RegisterPage() {
               {success && (
                 <div className="mt-5 rounded-xl border border-[#BDE3E0] bg-[#EDF8F7] p-5">
                   <p className="font-semibold text-[#238C89]">
-                    Registration successful in prototype.
+                    Registration successful.
                   </p>
 
                   <p className="mt-2 text-sm leading-6 text-gray-500">
-                    Your profile has been created, but you are not yet included
-                    in ambassador scoring or rankings. Connect and verify a
-                    supported social account to become eligible.
+                    Your account has been saved successfully. Your ambassador
+                    profile is currently pending social verification.
                   </p>
                 </div>
               )}
@@ -303,12 +338,6 @@ export default function RegisterPage() {
                 leaderboard ranking and awards.
               </p>
             </section>
-
-            <p className="mt-6 text-center text-xs leading-5 text-gray-400">
-              This is currently a frontend prototype. Registration will be
-              connected to FastAPI and PostgreSQL in the backend integration
-              phase.
-            </p>
           </div>
         </section>
       </div>
