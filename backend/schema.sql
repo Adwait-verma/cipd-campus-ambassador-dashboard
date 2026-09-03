@@ -6,6 +6,7 @@ CREATE TABLE users (
     full_name VARCHAR(100) NOT NULL,
     email VARCHAR(150) UNIQUE NOT NULL,
     role VARCHAR(20) CHECK (role IN ('ADMIN', 'AMBASSADOR')),
+    password_hash TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -26,7 +27,9 @@ CREATE TABLE social_accounts (
     access_token TEXT,              -- store encrypted, never plaintext
     token_expires_at TIMESTAMP WITH TIME ZONE,
     follower_count INT DEFAULT 0,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    verified BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (ambassador_id, platform)
 );
 
 CREATE TABLE campaigns (
@@ -50,6 +53,22 @@ CREATE TABLE campaign_posts (
     published_at TIMESTAMP WITH TIME ZONE,
     is_verified BOOLEAN DEFAULT FALSE
 );
+
+CREATE UNIQUE INDEX campaign_posts_unique_platform_post
+    ON campaign_posts (
+        campaign_id,
+        ambassador_id,
+        platform,
+        platform_post_id
+    );
+
+CREATE UNIQUE INDEX campaign_posts_unique_post_url
+    ON campaign_posts (
+        campaign_id,
+        ambassador_id,
+        platform,
+        (RTRIM(post_url, '/'))
+    );
 
 CREATE TABLE metric_snapshots (
     snapshot_id SERIAL PRIMARY KEY,
