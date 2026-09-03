@@ -6,3 +6,4 @@ python-dotenv
 pydantic
 email-validator
 pwdlib[argon2]
+PyJWT

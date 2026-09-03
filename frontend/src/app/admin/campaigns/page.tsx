@@ -1,61 +1,137 @@
 "use client";
-
+import { authFetch } from "@/lib/api";
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 
-const campaigns = [
-  {
-    id: 1,
-    title: "AI Awareness Week",
-    description: "Promote CiPD's latest AI research reel.",
-    status: "ACTIVE",
-    participants: 84,
-    submissions: 136,
-    verified: 121,
-    startDate: "20 Aug 2026",
-    endDate: "31 Aug 2026",
-  },
-  {
-    id: 2,
-    title: "Digital India Research",
-    description: "Share CiPD research and increase student awareness.",
-    status: "ACTIVE",
-    participants: 57,
-    submissions: 82,
-    verified: 74,
-    startDate: "24 Aug 2026",
-    endDate: "5 Sep 2026",
-  },
-  {
-    id: 3,
-    title: "Campus Research Spotlight",
-    description: "Highlight research projects from the CiPD community.",
-    status: "COMPLETED",
-    participants: 103,
-    submissions: 188,
-    verified: 176,
-    startDate: "1 Aug 2026",
-    endDate: "15 Aug 2026",
-  },
-];
+type CampaignStatus =
+  | "ACTIVE"
+  | "UPCOMING"
+  | "COMPLETED";
+
+type Campaign = {
+  campaign_id: number;
+  title: string;
+  description: string | null;
+  mandatory_hashtag: string | null;
+  target_url: string | null;
+  start_date: string;
+  end_date: string;
+  is_active: boolean;
+  status: CampaignStatus;
+  participants: number;
+  submissions: number;
+  verified: number;
+};
 
 export default function AdminCampaignsPage() {
-  const activeCampaigns = campaigns.filter(
-    (campaign) => campaign.status === "ACTIVE"
-  ).length;
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const totalSubmissions = campaigns.reduce(
-    (sum, campaign) => sum + campaign.submissions,
-    0
-  );
+  useEffect(() => {
+    async function loadCampaigns() {
+      const storedUser = localStorage.getItem("cipd_user");
 
-  const totalVerified = campaigns.reduce(
-    (sum, campaign) => sum + campaign.verified,
-    0
-  );
+      if (!storedUser) {
+        window.location.href = "/login";
+        return;
+      }
 
-  const verificationRate = Math.round(
-    (totalVerified / totalSubmissions) * 100
-  );
+      try {
+        const user = JSON.parse(storedUser);
+
+        if (user.role !== "ADMIN") {
+          window.location.href = "/login";
+          return;
+        }
+
+        const response = await authFetch(
+  "http://127.0.0.1:8000/admin/campaigns"
+);
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          setError(
+            data.detail || "Failed to load campaigns."
+          );
+          return;
+        }
+
+        setCampaigns(data.campaigns);
+      } catch {
+        setError(
+          "Could not connect to the backend. Make sure FastAPI is running."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadCampaigns();
+  }, []);
+
+  const statistics = useMemo(() => {
+    const activeCampaigns = campaigns.filter(
+      (campaign) => campaign.status === "ACTIVE"
+    ).length;
+
+    const totalSubmissions = campaigns.reduce(
+      (sum, campaign) =>
+        sum + Number(campaign.submissions || 0),
+      0
+    );
+
+    const totalVerified = campaigns.reduce(
+      (sum, campaign) =>
+        sum + Number(campaign.verified || 0),
+      0
+    );
+
+    const verificationRate =
+      totalSubmissions > 0
+        ? Math.round(
+            (totalVerified / totalSubmissions) * 100
+          )
+        : 0;
+
+    return {
+      activeCampaigns,
+      totalSubmissions,
+      totalVerified,
+      verificationRate,
+    };
+  }, [campaigns]);
+
+  function formatDate(date: string) {
+    return new Date(date).toLocaleDateString();
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <p className="text-sm text-gray-500">
+          Loading campaigns...
+        </p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6">
+          <p className="font-semibold text-red-700">
+            Could not load campaigns
+          </p>
+
+          <p className="mt-2 text-sm text-red-600">
+            {error}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-[1500px]">
@@ -71,7 +147,7 @@ export default function AdminCampaignsPage() {
           </h1>
 
           <p className="mt-2 text-gray-500">
-            Create and manage CiPD ambassador campaigns.
+            Create, manage and score CiPD ambassador campaigns.
           </p>
         </div>
 
@@ -83,7 +159,7 @@ export default function AdminCampaignsPage() {
         </Link>
       </div>
 
-      {/* Statistics */}
+      {/* Real statistics */}
       <div className="mb-8 grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Total Campaigns"
@@ -93,19 +169,19 @@ export default function AdminCampaignsPage() {
 
         <StatCard
           label="Active Campaigns"
-          value={String(activeCampaigns)}
+          value={String(statistics.activeCampaigns)}
           color="#9383D8"
         />
 
         <StatCard
           label="Total Submissions"
-          value={String(totalSubmissions)}
+          value={String(statistics.totalSubmissions)}
           color="#E98AAE"
         />
 
         <StatCard
           label="Verification Rate"
-          value={`${verificationRate}%`}
+          value={`${statistics.verificationRate}%`}
           color="#F0C568"
         />
       </div>
@@ -118,103 +194,139 @@ export default function AdminCampaignsPage() {
           </h2>
 
           <p className="mt-1 text-sm text-gray-400">
-            Monitor campaign participation and submissions.
+            Real campaign participation and submission data.
           </p>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1000px]">
-            <thead>
-              <tr className="bg-[#F8FAFA]">
-                {[
-                  "Campaign",
-                  "Status",
-                  "Participants",
-                  "Submissions",
-                  "Verified",
-                  "Duration",
-                  "",
-                ].map((heading) => (
-                  <th
-                    key={heading}
-                    className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400"
-                  >
-                    {heading}
-                  </th>
-                ))}
-              </tr>
-            </thead>
+        {campaigns.length === 0 ? (
+          <div className="p-10 text-center">
+            <p className="font-semibold text-[#202629]">
+              No campaigns yet
+            </p>
 
-            <tbody>
-              {campaigns.map((campaign) => {
-                const rate = Math.round(
-                  (campaign.verified / campaign.submissions) * 100
-                );
+            <p className="mt-2 text-sm text-gray-400">
+              Create your first campaign to begin.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1000px]">
+              <thead>
+                <tr className="bg-[#F8FAFA]">
+                  {[
+                    "Campaign",
+                    "Status",
+                    "Participants",
+                    "Submissions",
+                    "Verified",
+                    "Duration",
+                    "",
+                  ].map((heading) => (
+                    <th
+                      key={heading}
+                      className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400"
+                    >
+                      {heading}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
 
-                return (
-                  <tr
-                    key={campaign.id}
-                    className="border-t border-gray-100 transition hover:bg-gray-50"
-                  >
-                    <td className="px-6 py-5">
-                      <p className="font-semibold text-[#202629]">
-                        {campaign.title}
-                      </p>
+              <tbody>
+                {campaigns.map((campaign) => {
+                  const submissions =
+                    Number(campaign.submissions || 0);
 
-                      <p className="mt-1 max-w-[300px] text-sm text-gray-400">
-                        {campaign.description}
-                      </p>
-                    </td>
+                  const verified =
+                    Number(campaign.verified || 0);
 
-                    <td className="px-6 py-5">
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-bold ${
-                          campaign.status === "ACTIVE"
-                            ? "bg-green-50 text-green-700"
-                            : "bg-gray-100 text-gray-500"
-                        }`}
-                      >
-                        {campaign.status}
-                      </span>
-                    </td>
+                  const verificationRate =
+                    submissions > 0
+                      ? Math.round(
+                          (verified / submissions) * 100
+                        )
+                      : 0;
 
-                    <td className="px-6 py-5 font-semibold text-[#202629]">
-                      {campaign.participants}
-                    </td>
+                  return (
+                    <tr
+                      key={campaign.campaign_id}
+                      className="border-t border-gray-100 transition hover:bg-gray-50"
+                    >
+                      <td className="px-6 py-5">
+                        <p className="font-semibold text-[#202629]">
+                          {campaign.title}
+                        </p>
 
-                    <td className="px-6 py-5 font-semibold text-[#202629]">
-                      {campaign.submissions}
-                    </td>
+                        <p className="mt-1 max-w-[300px] text-sm text-gray-400">
+                          {campaign.description ||
+                            "No description provided."}
+                        </p>
 
-                    <td className="px-6 py-5">
-                      <p className="font-semibold text-[#202629]">
-                        {campaign.verified}
-                      </p>
+                        {campaign.mandatory_hashtag && (
+                          <p className="mt-2 text-xs font-semibold text-[#9383D8]">
+                            {campaign.mandatory_hashtag}
+                          </p>
+                        )}
+                      </td>
 
-                      <p className="mt-1 text-xs text-[#238C89]">
-                        {rate}% verified
-                      </p>
-                    </td>
+                      <td className="px-6 py-5">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${
+                            campaign.status === "ACTIVE"
+                              ? "bg-green-50 text-green-700"
+                              : campaign.status ===
+                                  "UPCOMING"
+                                ? "bg-blue-50 text-blue-700"
+                                : "bg-gray-100 text-gray-500"
+                          }`}
+                        >
+                          {campaign.status}
+                        </span>
+                      </td>
 
-                    <td className="px-6 py-5 text-sm text-gray-500">
-                      <p>{campaign.startDate}</p>
-                      <p className="mt-1">→ {campaign.endDate}</p>
-                    </td>
+                      <td className="px-6 py-5 font-semibold text-[#202629]">
+                        {campaign.participants}
+                      </td>
 
-                    <td className="px-6 py-5">
-                      <Link
-                        href={`/admin/campaigns/${campaign.id}`}
-                        className="font-semibold text-[#9383D8]"
-                      >
-                        Manage →
-                      </Link>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      <td className="px-6 py-5 font-semibold text-[#202629]">
+                        {campaign.submissions}
+                      </td>
+
+                      <td className="px-6 py-5">
+                        <p className="font-semibold text-[#202629]">
+                          {campaign.verified}
+                        </p>
+
+                        <p className="mt-1 text-xs text-[#238C89]">
+                          {verificationRate}% verified
+                        </p>
+                      </td>
+
+                      <td className="px-6 py-5 text-sm text-gray-500">
+                        <p>
+                          {formatDate(campaign.start_date)}
+                        </p>
+
+                        <p className="mt-1">
+                          → {formatDate(campaign.end_date)}
+                        </p>
+                      </td>
+
+                      <td className="px-6 py-5">
+                        <Link
+                          href={`/admin/campaigns/${campaign.campaign_id}`}
+                          className="font-semibold text-[#9383D8]"
+                        >
+                          Manage →
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </div>
   );

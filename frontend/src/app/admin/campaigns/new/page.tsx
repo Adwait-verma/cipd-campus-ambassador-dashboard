@@ -1,10 +1,14 @@
 "use client";
-
+import { authFetch } from "@/lib/api";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 export default function CreateCampaignPage() {
-  const [saved, setSaved] = useState(false);
+  const router = useRouter();
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const [form, setForm] = useState({
     title: "",
@@ -13,12 +17,11 @@ export default function CreateCampaignPage() {
     endDate: "",
     hashtag: "",
     officialUrl: "",
-    requiredPosts: "1",
-    status: "DRAFT",
+    status: "ACTIVE",
   });
 
   function updateField(field: keyof typeof form, value: string) {
-    setSaved(false);
+    setError("");
 
     setForm((current) => ({
       ...current,
@@ -26,10 +29,67 @@ export default function CreateCampaignPage() {
     }));
   }
 
-  function handleCreate() {
-    if (!form.title.trim()) return;
+  async function handleCreate() {
+    setError("");
 
-    setSaved(true);
+    if (!form.title.trim()) {
+      setError("Campaign title is required.");
+      return;
+    }
+
+    if (!form.startDate || !form.endDate) {
+      setError("Start date and end date are required.");
+      return;
+    }
+
+    if (form.endDate < form.startDate) {
+      setError("End date cannot be before start date.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+const response = await authFetch(
+  "http://127.0.0.1:8000/admin/campaigns",
+  {
+    method: "POST",
+    body: JSON.stringify({
+      title: form.title.trim(),
+      description: form.description.trim() || null,
+      mandatory_hashtag: form.hashtag.trim() || null,
+      target_url: form.officialUrl.trim() || null,
+      start_date: form.startDate,
+      end_date: form.endDate,
+      is_active: form.status === "ACTIVE",
+    }),
+  }
+);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.detail || "Failed to create campaign."
+        );
+      }
+
+      const campaignId = data.campaign?.campaign_id;
+
+      if (!campaignId) {
+        throw new Error(
+          "Campaign was created, but no campaign ID was returned."
+        );
+      }
+
+      router.push(`/admin/campaigns/${campaignId}`);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to create campaign."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -67,7 +127,9 @@ export default function CreateCampaignPage() {
 
             <input
               value={form.title}
-              onChange={(e) => updateField("title", e.target.value)}
+              onChange={(e) =>
+                updateField("title", e.target.value)
+              }
               placeholder="e.g. AI Awareness Week"
               className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
             />
@@ -80,7 +142,9 @@ export default function CreateCampaignPage() {
 
             <textarea
               value={form.description}
-              onChange={(e) => updateField("description", e.target.value)}
+              onChange={(e) =>
+                updateField("description", e.target.value)
+              }
               placeholder="Explain what ambassadors need to promote..."
               rows={5}
               className="mt-2 w-full resize-none rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
@@ -95,7 +159,9 @@ export default function CreateCampaignPage() {
             <input
               type="date"
               value={form.startDate}
-              onChange={(e) => updateField("startDate", e.target.value)}
+              onChange={(e) =>
+                updateField("startDate", e.target.value)
+              }
               className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
             />
           </div>
@@ -108,7 +174,9 @@ export default function CreateCampaignPage() {
             <input
               type="date"
               value={form.endDate}
-              onChange={(e) => updateField("endDate", e.target.value)}
+              onChange={(e) =>
+                updateField("endDate", e.target.value)
+              }
               className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
             />
           </div>
@@ -120,35 +188,10 @@ export default function CreateCampaignPage() {
 
             <input
               value={form.hashtag}
-              onChange={(e) => updateField("hashtag", e.target.value)}
+              onChange={(e) =>
+                updateField("hashtag", e.target.value)
+              }
               placeholder="#CiPDResearch"
-              className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-              Required posts
-            </label>
-
-            <input
-              type="number"
-              min="1"
-              value={form.requiredPosts}
-              onChange={(e) => updateField("requiredPosts", e.target.value)}
-              className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
-            />
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-              Official CiPD content URL
-            </label>
-
-            <input
-              value={form.officialUrl}
-              onChange={(e) => updateField("officialUrl", e.target.value)}
-              placeholder="https://..."
               className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
             />
           </div>
@@ -160,22 +203,46 @@ export default function CreateCampaignPage() {
 
             <select
               value={form.status}
-              onChange={(e) => updateField("status", e.target.value)}
+              onChange={(e) =>
+                updateField("status", e.target.value)
+              }
               className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
             >
-              <option value="DRAFT">Draft</option>
               <option value="ACTIVE">Active</option>
-              <option value="UPCOMING">Upcoming</option>
+              <option value="INACTIVE">Inactive</option>
             </select>
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+              Official CiPD content URL
+            </label>
+
+            <input
+              value={form.officialUrl}
+              onChange={(e) =>
+                updateField("officialUrl", e.target.value)
+              }
+              placeholder="https://cipd.iiitd.ac.in/"
+              className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
+            />
           </div>
         </div>
 
+        {error && (
+          <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+            {error}
+          </div>
+        )}
+
         <div className="mt-8 flex flex-wrap items-center gap-4">
           <button
+            type="button"
             onClick={handleCreate}
-            className="rounded-xl bg-[#202629] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#343B3E]"
+            disabled={loading}
+            className="rounded-xl bg-[#202629] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#343B3E] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Create campaign
+            {loading ? "Creating..." : "Create campaign"}
           </button>
 
           <Link
@@ -184,24 +251,18 @@ export default function CreateCampaignPage() {
           >
             Cancel
           </Link>
-
-          {saved && (
-            <span className="text-sm font-semibold text-green-700">
-              Campaign saved in prototype
-            </span>
-          )}
         </div>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-[#E5DFF6] bg-[#F6F3FC] p-5">
+      <section className="mt-6 rounded-2xl border border-[#D5EBE9] bg-[#F1FAF9] p-5">
         <p className="font-semibold text-[#202629]">
-          Prototype behaviour
+          Campaign persistence
         </p>
 
         <p className="mt-2 text-sm leading-6 text-gray-500">
-          This form currently stores data only in the frontend state. Later,
-          clicking Create Campaign will send a POST request to FastAPI and
-          create the campaign in PostgreSQL.
+          Creating a campaign now saves it to PostgreSQL through the FastAPI
+          backend. Active campaigns are available to eligible Campus
+          Ambassadors during their configured campaign dates.
         </p>
       </section>
     </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 const navigation = [
   {
@@ -33,6 +33,15 @@ const navigation = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  function handleLogout() {
+    localStorage.removeItem("cipd_user");
+    localStorage.removeItem("cipd_token");
+
+    router.replace("/login");
+    router.refresh();
+  }
 
   return (
     <aside className="fixed left-0 top-0 flex h-screen w-64 flex-col bg-[#202629] text-white">
@@ -91,12 +100,11 @@ export default function Sidebar() {
 
       {/* Bottom */}
       <div className="border-t border-white/10 px-4 py-5">
-        <button className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm text-gray-400 transition hover:bg-white/5 hover:text-white">
-          <span>⚙</span>
-          Settings
-        </button>
-
-        <button className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm text-gray-400 transition hover:bg-white/5 hover:text-white">
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm text-gray-400 transition hover:bg-white/5 hover:text-white"
+        >
           <span>↪</span>
           Logout
         </button>

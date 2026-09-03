@@ -1,107 +1,87 @@
 "use client";
-
+import { authFetch } from "@/lib/api";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
-type AmbassadorDetail = {
-  id: string;
-  name: string;
-  initials: string;
+type AmbassadorStatus = "ACTIVE" | "PENDING" | "SUSPENDED";
+
+type Ambassador = {
+  ambassador_id: number;
+  user_id: number;
+  full_name: string;
   email: string;
-  college: string;
-  graduationYear: string;
-  city: string;
-  status: "ACTIVE" | "PENDING" | "SUSPENDED";
-  socialAccounts: {
-    platform: string;
-    username: string;
-    followers: string;
-    verified: boolean;
-    lastSync: string;
-  }[];
-  reach: string;
-  engagement: string;
-  score: string;
-  percentile: string;
-  rank: string;
-  stars: number;
+  college_name: string;
+  graduation_year: number;
+  status: AmbassadorStatus;
 };
 
-const ambassadorData: Record<string, AmbassadorDetail> = {
-  "1": {
-    id: "1",
-    name: "Riya Sharma",
-    initials: "RS",
-    email: "riya@example.com",
-    college: "IIT Delhi",
-    graduationYear: "2027",
-    city: "New Delhi",
-    status: "ACTIVE",
-    socialAccounts: [
-      {
-        platform: "Instagram",
-        username: "@riya.builds",
-        followers: "12,480",
-        verified: true,
-        lastSync: "3 minutes ago",
-      },
-    ],
-    reach: "83.2K",
-    engagement: "11.2%",
-    score: "96.3",
-    percentile: "99th",
-    rank: "#1",
-    stars: 5,
-  },
-
-  "4": {
-    id: "4",
-    name: "Aarav Mehta",
-    initials: "AM",
-    email: "aarav@iiitd.ac.in",
-    college: "IIIT Delhi",
-    graduationYear: "2027",
-    city: "New Delhi",
-    status: "ACTIVE",
-    socialAccounts: [
-      {
-        platform: "Instagram",
-        username: "@aarav.builds",
-        followers: "4,823",
-        verified: true,
-        lastSync: "5 minutes ago",
-      },
-    ],
-    reach: "42.8K",
-    engagement: "8.4%",
-    score: "82.6",
-    percentile: "87th",
-    rank: "#7",
-    stars: 4,
-  },
-
-  "5": {
-    id: "5",
-    name: "Kabir Rao",
-    initials: "KR",
-    email: "kabir@example.com",
-    college: "NSUT",
-    graduationYear: "2027",
-    city: "New Delhi",
-    status: "PENDING",
-    socialAccounts: [],
-    reach: "—",
-    engagement: "—",
-    score: "—",
-    percentile: "—",
-    rank: "—",
-    stars: 0,
-  },
+type SocialAccount = {
+  account_id: number;
+  platform: string;
+  profile_handle: string;
+  follower_count: number;
+  verified: boolean;
+  updated_at: string;
 };
 
-function Stars({ count }: { count: number }) {
-  if (count === 0) {
-    return <span className="text-gray-300">Not rated</span>;
+type Rating = {
+  normalized_score: number;
+  percentile_rank: number;
+  star_rating: number;
+  campaign_id: number;
+  calculated_at: string;
+} | null;
+
+type Ranking = {
+  current_rank: number | null;
+  total_ranked: number;
+};
+
+type Submission = {
+  post_id: number;
+  campaign_id: number;
+  campaign_title: string;
+  platform: string;
+  post_url: string;
+  platform_post_id: string;
+  published_at: string | null;
+  is_verified: boolean;
+  snapshot_id: number | null;
+  fetched_at: string | null;
+  reach_count: number;
+  likes_count: number;
+  comments_count: number;
+  shares_count: number;
+  saves_count: number;
+  views_impressions: number;
+};
+
+type AmbassadorDetailResponse = {
+  ambassador: Ambassador;
+  social_accounts: SocialAccount[];
+  metrics: {
+    total_reach: number;
+    total_engagements: number;
+    engagement_rate: number;
+  };
+  rating: Rating;
+  ranking: Ranking;
+  submissions: Submission[];
+};
+
+type MetricForm = {
+  reach_count: string;
+  likes_count: string;
+  comments_count: string;
+  shares_count: string;
+  saves_count: string;
+  views_impressions: string;
+};
+
+function Stars({ count }: { count: number | null }) {
+  if (!count) {
+    return <span className="text-sm text-gray-400">Not rated</span>;
   }
 
   return (
@@ -116,16 +96,186 @@ function Stars({ count }: { count: number }) {
 
 export default function AmbassadorDetailPage() {
   const params = useParams();
-  const id = String(params.id);
+  const ambassadorId = Number(params.id);
 
-  const ambassador =
-    ambassadorData[id] ?? ambassadorData["4"];
+  const [data, setData] =
+    useState<AmbassadorDetailResponse | null>(null);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [selectedPostId, setSelectedPostId] =
+    useState<number | null>(null);
+
+  const [metricForm, setMetricForm] = useState<MetricForm>({
+    reach_count: "0",
+    likes_count: "0",
+    comments_count: "0",
+    shares_count: "0",
+    saves_count: "0",
+    views_impressions: "0",
+  });
+
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const storedUser = localStorage.getItem("cipd_user");
+
+    if (!storedUser) {
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      const user = JSON.parse(storedUser);
+
+      if (user.role !== "ADMIN") {
+        window.location.href = "/login";
+        return;
+      }
+
+      loadAmbassador();
+    } catch {
+      localStorage.removeItem("cipd_user");
+      window.location.href = "/login";
+    }
+  }, [ambassadorId]);
+
+  async function loadAmbassador() {
+    try {
+      setLoading(true);
+
+     const response = await authFetch(
+  `http://127.0.0.1:8000/admin/ambassadors/${ambassadorId}`
+);
+      const result = await response.json();
+
+      if (!response.ok) {
+        setError(result.detail || "Failed to load ambassador.");
+        return;
+      }
+
+      setData(result);
+    } catch {
+      setError(
+        "Could not connect to the backend. Make sure FastAPI is running."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function openMetricForm(post: Submission) {
+    setSelectedPostId(post.post_id);
+
+    setMetricForm({
+      reach_count: String(post.reach_count ?? 0),
+      likes_count: String(post.likes_count ?? 0),
+      comments_count: String(post.comments_count ?? 0),
+      shares_count: String(post.shares_count ?? 0),
+      saves_count: String(post.saves_count ?? 0),
+      views_impressions: String(post.views_impressions ?? 0),
+    });
+
+    setMessage("");
+  }
+
+  async function verifyAndSaveMetrics(postId: number) {
+    try {
+      setSaving(true);
+      setMessage("");
+const response = await authFetch(
+  `http://127.0.0.1:8000/admin/campaign-posts/${postId}/verify`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      reach_count: Number(metricForm.reach_count),
+      likes_count: Number(metricForm.likes_count),
+      comments_count: Number(metricForm.comments_count),
+      shares_count: Number(metricForm.shares_count),
+      saves_count: Number(metricForm.saves_count),
+      views_impressions: Number(metricForm.views_impressions),
+    }),
+  }
+);
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        setMessage(result.detail || "Failed to save metrics.");
+        return;
+      }
+
+      setMessage("Post verified and metrics saved successfully.");
+      setSelectedPostId(null);
+
+      await loadAmbassador();
+    } catch {
+      setMessage("Could not connect to the backend.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function formatNumber(value: number) {
+    return Number(value || 0).toLocaleString();
+  }
+
+  function formatDate(value: string | null) {
+    if (!value) {
+      return "—";
+    }
+
+    return new Date(value).toLocaleString();
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <p className="text-sm text-gray-500">
+          Loading ambassador...
+        </p>
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6">
+          <p className="font-semibold text-red-700">
+            Could not load ambassador
+          </p>
+
+          <p className="mt-2 text-sm text-red-600">
+            {error || "Ambassador not found."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const {
+    ambassador,
+    social_accounts,
+    metrics,
+    rating,
+    ranking,
+    submissions,
+  } = data;
+
+  const initials = ambassador.full_name
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
   const isActive = ambassador.status === "ACTIVE";
 
   return (
     <div className="mx-auto max-w-[1500px]">
-
       {/* Back */}
       <div className="mb-6">
         <Link
@@ -138,10 +288,9 @@ export default function AmbassadorDetailPage() {
 
       {/* Header */}
       <section className="mb-8 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-
         <div className="flex items-center gap-5">
           <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[#202629] text-xl font-bold text-white">
-            {ambassador.initials}
+            {initials}
           </div>
 
           <div>
@@ -150,11 +299,12 @@ export default function AmbassadorDetailPage() {
             </p>
 
             <h1 className="text-3xl font-bold text-[#202629]">
-              {ambassador.name}
+              {ambassador.full_name}
             </h1>
 
             <p className="mt-2 text-sm text-gray-500">
-              {ambassador.college} • Graduation {ambassador.graduationYear}
+              {ambassador.college_name} • Graduation{" "}
+              {ambassador.graduation_year}
             </p>
 
             <p className="mt-1 text-sm text-gray-400">
@@ -176,7 +326,7 @@ export default function AmbassadorDetailPage() {
         </span>
       </section>
 
-      {/* Active / pending explanation */}
+      {/* Eligibility */}
       <section
         className={`mb-6 rounded-2xl border p-5 ${
           isActive
@@ -192,20 +342,45 @@ export default function AmbassadorDetailPage() {
 
         <p className="mt-2 text-sm leading-6 text-gray-500">
           {isActive
-            ? "This user has at least one verified social account and can participate in engagement-based campaign scoring."
-            : "This user is registered but has no verified social account. They are excluded from active ambassador counts, normalization, leaderboard ranking and star allocation."}
+            ? "This ambassador has at least one verified social account and is eligible for campaign scoring."
+            : "This ambassador does not currently have a verified social account and is excluded from scoring and rankings."}
         </p>
       </section>
 
-      {/* Performance Cards */}
+      {/* Real performance */}
       <section className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-5">
-
         {[
-          ["Total Reach", ambassador.reach, "#54B9B4"],
-          ["Engagement", ambassador.engagement, "#9383D8"],
-          ["Normalized Score", ambassador.score, "#E98AAE"],
-          ["Percentile", ambassador.percentile, "#F0C568"],
-          ["Rank", ambassador.rank, "#54B9B4"],
+          [
+            "Total Reach",
+            formatNumber(metrics.total_reach),
+            "#54B9B4",
+          ],
+          [
+            "Engagement",
+            `${metrics.engagement_rate}%`,
+            "#9383D8",
+          ],
+          [
+            "Normalized Score",
+            rating
+              ? Number(rating.normalized_score).toFixed(2)
+              : "—",
+            "#E98AAE",
+          ],
+          [
+            "Percentile",
+            rating
+              ? `${Number(rating.percentile_rank).toFixed(2)}%`
+              : "—",
+            "#F0C568",
+          ],
+          [
+            "Rank",
+            ranking.current_rank !== null
+              ? `#${ranking.current_rank}`
+              : "—",
+            "#54B9B4",
+          ],
         ].map(([label, value, color]) => (
           <div
             key={label}
@@ -227,9 +402,8 @@ export default function AmbassadorDetailPage() {
         ))}
       </section>
 
-      <section className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[1fr_1fr]">
-
-        {/* Profile info */}
+      <section className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+        {/* Profile */}
         <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
           <h2 className="text-xl font-bold text-[#202629]">
             Profile information
@@ -237,11 +411,14 @@ export default function AmbassadorDetailPage() {
 
           <div className="mt-6 space-y-5">
             {[
-              ["Full name", ambassador.name],
+              ["Full name", ambassador.full_name],
               ["Email", ambassador.email],
-              ["College", ambassador.college],
-              ["Graduation year", ambassador.graduationYear],
-              ["City", ambassador.city],
+              ["College", ambassador.college_name],
+              [
+                "Graduation year",
+                String(ambassador.graduation_year),
+              ],
+              ["Status", ambassador.status],
             ].map(([label, value]) => (
               <div
                 key={label}
@@ -259,44 +436,50 @@ export default function AmbassadorDetailPage() {
           </div>
         </div>
 
-        {/* Social accounts */}
+        {/* Social */}
         <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
           <h2 className="text-xl font-bold text-[#202629]">
             Connected social accounts
           </h2>
 
-          {ambassador.socialAccounts.length === 0 ? (
+          {social_accounts.length === 0 ? (
             <div className="mt-6 rounded-xl border border-dashed border-gray-300 bg-[#F8FAFA] p-6">
               <p className="font-semibold text-[#202629]">
-                No verified account
+                No connected accounts
               </p>
 
-              <p className="mt-2 text-sm leading-6 text-gray-500">
-                This registered user cannot yet be counted as an active
-                Campus Ambassador.
+              <p className="mt-2 text-sm text-gray-500">
+                This ambassador has not connected a social account.
               </p>
             </div>
           ) : (
             <div className="mt-6 space-y-4">
-              {ambassador.socialAccounts.map((account) => (
+              {social_accounts.map((account) => (
                 <div
-                  key={account.platform}
+                  key={account.account_id}
                   className="rounded-xl bg-[#F8FAFA] p-5"
                 >
-                  <div className="flex items-center justify-between">
-
+                  <div className="flex items-start justify-between gap-4">
                     <div>
                       <p className="font-bold text-[#202629]">
                         {account.platform}
                       </p>
 
                       <p className="mt-1 text-sm text-gray-500">
-                        {account.username}
+                        {account.profile_handle}
                       </p>
                     </div>
 
-                    <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
-                      VERIFIED
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        account.verified
+                          ? "bg-green-50 text-green-700"
+                          : "bg-yellow-50 text-yellow-700"
+                      }`}
+                    >
+                      {account.verified
+                        ? "VERIFIED"
+                        : "PENDING"}
                     </span>
                   </div>
 
@@ -307,17 +490,17 @@ export default function AmbassadorDetailPage() {
                       </p>
 
                       <p className="mt-1 font-semibold text-[#202629]">
-                        {account.followers}
+                        {formatNumber(account.follower_count)}
                       </p>
                     </div>
 
                     <div>
                       <p className="text-xs text-gray-400">
-                        Last sync
+                        Last updated
                       </p>
 
-                      <p className="mt-1 font-semibold text-[#202629]">
-                        {account.lastSync}
+                      <p className="mt-1 text-sm font-semibold text-[#202629]">
+                        {formatDate(account.updated_at)}
                       </p>
                     </div>
                   </div>
@@ -328,153 +511,205 @@ export default function AmbassadorDetailPage() {
         </div>
       </section>
 
-      {/* Rating Evidence */}
+      {/* Rating */}
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          Current Award
+        </p>
 
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-              Current Award
-            </p>
-
-            <div className="mt-3 flex items-center gap-4">
-              <Stars count={ambassador.stars} />
-
-              {ambassador.stars > 0 && (
-                <span className="rounded-full bg-[#DDF3F1] px-3 py-1 text-xs font-bold text-[#238C89]">
-                  {ambassador.stars} STAR
-                </span>
-              )}
-            </div>
-          </div>
-
-          {isActive && (
-            <div className="grid grid-cols-2 gap-6 md:grid-cols-3">
-              <div>
-                <p className="text-xs text-gray-400">
-                  Score
-                </p>
-
-                <p className="mt-1 font-bold text-[#202629]">
-                  {ambassador.score}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-xs text-gray-400">
-                  Percentile
-                </p>
-
-                <p className="mt-1 font-bold text-[#202629]">
-                  {ambassador.percentile}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-xs text-gray-400">
-                  Rank
-                </p>
-
-                <p className="mt-1 font-bold text-[#202629]">
-                  {ambassador.rank}
-                </p>
-              </div>
-            </div>
-          )}
+        <div className="mt-3">
+          <Stars count={rating?.star_rating ?? null} />
         </div>
+
+        {!rating && (
+          <p className="mt-2 text-sm text-gray-400">
+            No rating has been calculated yet.
+          </p>
+        )}
       </section>
 
-      {/* Recent submissions */}
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white shadow-sm">
+      {/* Real submissions */}
+      <section className="mt-6 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-100 p-7">
           <h2 className="text-xl font-bold text-[#202629]">
             Campaign submissions
           </h2>
 
           <p className="mt-1 text-sm text-gray-400">
-            Recent verified campaign activity
+            Review submitted social posts and record verified metrics.
           </p>
         </div>
 
-        {!isActive ? (
+        {submissions.length === 0 ? (
           <div className="p-8">
             <p className="text-sm text-gray-500">
-              No eligible campaign activity is available.
+              This ambassador has not submitted any campaign posts.
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[850px]">
-              <thead>
-                <tr className="bg-[#F8FAFA] text-left">
-                  {[
-                    "Campaign",
-                    "Platform",
-                    "Reach",
-                    "Likes",
-                    "Comments",
-                    "Score",
-                    "Status",
-                  ].map((heading) => (
-                    <th
-                      key={heading}
-                      className="px-6 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400"
+          <div className="space-y-5 p-6">
+            {submissions.map((post) => (
+              <div
+                key={post.post_id}
+                className="rounded-2xl border border-gray-200 p-5"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-[#9383D8]">
+                      {post.campaign_title}
+                    </p>
+
+                    <h3 className="mt-2 font-bold text-[#202629]">
+                      {post.platform}
+                    </h3>
+
+                    <a
+                      href={post.post_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 block break-all text-sm font-medium text-[#238C89]"
                     >
-                      {heading}
-                    </th>
+                      {post.post_url}
+                    </a>
+
+                    <p className="mt-2 text-xs text-gray-400">
+                      Submitted: {formatDate(post.published_at)}
+                    </p>
+                  </div>
+
+                  <span
+                    className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ${
+                      post.is_verified
+                        ? "bg-green-50 text-green-700"
+                        : "bg-yellow-50 text-yellow-700"
+                    }`}
+                  >
+                    {post.is_verified
+                      ? "VERIFIED"
+                      : "PENDING"}
+                  </span>
+                </div>
+
+                <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+                  {[
+                    ["Reach", post.reach_count],
+                    ["Likes", post.likes_count],
+                    ["Comments", post.comments_count],
+                    ["Shares", post.shares_count],
+                  ].map(([label, value]) => (
+                    <div
+                      key={String(label)}
+                      className="rounded-xl bg-[#F8FAFA] p-4"
+                    >
+                      <p className="text-xs text-gray-400">
+                        {label}
+                      </p>
+
+                      <p className="mt-1 font-bold text-[#202629]">
+                        {formatNumber(Number(value))}
+                      </p>
+                    </div>
                   ))}
-                </tr>
-              </thead>
+                </div>
 
-              <tbody>
-                <tr className="border-t border-gray-100">
-                  <td className="px-6 py-5 font-semibold text-[#202629]">
-                    AI Awareness Week
-                  </td>
+                <button
+                  onClick={() => openMetricForm(post)}
+                  className="mt-5 rounded-xl bg-[#202629] px-5 py-3 text-sm font-semibold text-white"
+                >
+                  {post.is_verified
+                    ? "Update Metrics"
+                    : "Verify & Add Metrics"}
+                </button>
 
-                  <td className="px-6 py-5 text-sm text-gray-500">
-                    Instagram
-                  </td>
+                {selectedPostId === post.post_id && (
+                  <div className="mt-5 rounded-xl border border-[#E5DFF6] bg-[#F8F6FC] p-5">
+                    <h4 className="font-bold text-[#202629]">
+                      Metric verification
+                    </h4>
 
-                  <td className="px-6 py-5 font-semibold">
-                    12,481
-                  </td>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Enter the latest verified cumulative metrics for this post.
+                    </p>
 
-                  <td className="px-6 py-5">
-                    934
-                  </td>
+                    <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {[
+                        ["Reach", "reach_count"],
+                        ["Likes", "likes_count"],
+                        ["Comments", "comments_count"],
+                        ["Shares", "shares_count"],
+                        ["Saves", "saves_count"],
+                        ["Views / Impressions", "views_impressions"],
+                      ].map(([label, key]) => (
+                        <div key={key}>
+                          <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                            {label}
+                          </label>
 
-                  <td className="px-6 py-5">
-                    74
-                  </td>
+                          <input
+                            type="number"
+                            min="0"
+                            value={
+                              metricForm[
+                                key as keyof MetricForm
+                              ]
+                            }
+                            onChange={(e) =>
+                              setMetricForm((current) => ({
+                                ...current,
+                                [key]: e.target.value,
+                              }))
+                            }
+                            className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
+                          />
+                        </div>
+                      ))}
+                    </div>
 
-                  <td className="px-6 py-5 font-bold text-[#238C89]">
-                    86.4
-                  </td>
+                    {message && (
+                      <p className="mt-4 text-sm font-medium text-[#238C89]">
+                        {message}
+                      </p>
+                    )}
 
-                  <td className="px-6 py-5">
-                    <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
-                      VERIFIED
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                    <div className="mt-5 flex gap-3">
+                      <button
+                        onClick={() =>
+                          verifyAndSaveMetrics(post.post_id)
+                        }
+                        disabled={saving}
+                        className="rounded-xl bg-[#9383D8] px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        {saving
+                          ? "Saving..."
+                          : "Verify & Save Metrics"}
+                      </button>
+
+                      <button
+                        onClick={() =>
+                          setSelectedPostId(null)
+                        }
+                        className="rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-600"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </section>
 
-      {/* Methodology */}
       <section className="mt-6 rounded-2xl border border-[#E5DFF6] bg-[#F6F3FC] p-6">
         <p className="font-semibold text-[#202629]">
-          Award evidence
+          Metric history
         </p>
 
         <p className="mt-2 max-w-4xl text-sm leading-6 text-gray-500">
-          In the final system, this screen will display the exact metric
-          snapshots, normalized values and scoring calculation used to produce
-          the ambassador&apos;s percentile and star rating. This provides an
-          auditable explanation for every award.
+          Each verification saves a new metric snapshot. Dashboard calculations
+          use the latest snapshot for each post, so previous snapshots remain in
+          PostgreSQL without being double-counted.
         </p>
       </section>
     </div>

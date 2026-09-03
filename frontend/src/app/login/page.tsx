@@ -9,25 +9,67 @@ export default function LoginPage() {
   const [role, setRole] = useState<"ambassador" | "admin">("ambassador");
   const [message, setMessage] = useState("");
 
-  function handleLogin(e: React.FormEvent) {
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
+    setMessage("");
 
     if (!email.trim() || !password.trim()) {
       setMessage("Please enter your email and password.");
       return;
     }
 
-    setMessage(
-      role === "admin"
-        ? "Admin login successful in prototype."
-        : "Ambassador login successful in prototype."
-    );
+    try {
+      const response = await fetch("http://127.0.0.1:8000/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email,
+          password,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setMessage(data.detail || "Login failed.");
+        return;
+      }
+
+      if (!data.access_token) {
+        setMessage("Login succeeded, but no access token was returned.");
+        return;
+      }
+
+      if (role === "admin" && data.user.role !== "ADMIN") {
+        setMessage("This account is not an admin account.");
+        return;
+      }
+
+      if (role === "ambassador" && data.user.role !== "AMBASSADOR") {
+        setMessage("This account is not an ambassador account.");
+        return;
+      }
+
+      localStorage.setItem("cipd_user", JSON.stringify(data.user));
+      localStorage.setItem("cipd_token", data.access_token);
+
+      if (data.user.role === "ADMIN") {
+        window.location.href = "/admin";
+      } else {
+        window.location.href = "/ambassador/dashboard";
+      }
+    } catch {
+      setMessage(
+        "Could not connect to the backend. Make sure FastAPI is running."
+      );
+    }
   }
 
   return (
     <div className="min-h-screen bg-[#F5F7F7]">
       <div className="grid min-h-screen lg:grid-cols-[1.05fr_1fr]">
-
         {/* Left branding */}
         <section className="hidden bg-[#202629] p-12 text-white lg:flex lg:flex-col lg:justify-between">
           <div>
@@ -57,27 +99,21 @@ export default function LoginPage() {
 
             <div className="mt-10 grid grid-cols-3 gap-4">
               <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                <p className="text-2xl font-bold text-[#54B9B4]">
-                  Reach
-                </p>
+                <p className="text-2xl font-bold text-[#54B9B4]">Reach</p>
                 <p className="mt-2 text-xs text-gray-400">
                   Track campaign impact
                 </p>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                <p className="text-2xl font-bold text-[#9383D8]">
-                  Rank
-                </p>
+                <p className="text-2xl font-bold text-[#9383D8]">Rank</p>
                 <p className="mt-2 text-xs text-gray-400">
                   Compare fairly
                 </p>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                <p className="text-2xl font-bold text-[#F0C568]">
-                  ★
-                </p>
+                <p className="text-2xl font-bold text-[#F0C568]">★</p>
                 <p className="mt-2 text-xs text-gray-400">
                   Earn recognition
                 </p>
@@ -93,7 +129,6 @@ export default function LoginPage() {
         {/* Login */}
         <section className="flex items-center justify-center px-6 py-12">
           <div className="w-full max-w-md">
-
             <div className="mb-10 lg:hidden">
               <div className="text-3xl font-bold text-[#202629]">
                 C<span className="text-[#54B9B4]">i</span>PD
@@ -108,13 +143,13 @@ export default function LoginPage() {
               Sign in to CiPD
             </h2>
 
-            <p className="mt-3 text-sm leading-6 text-gray-500">
+            <p className="mt-3 text-sm leading-6 text-gray-600">
               Access your Campus Ambassador workspace or administration
               dashboard.
             </p>
 
             {/* Role selection */}
-            <div className="mt-8 grid grid-cols-2 rounded-xl border border-gray-200 bg-white p-1">
+            <div className="mt-8 grid grid-cols-2 rounded-xl border border-gray-300 bg-white p-1">
               <button
                 type="button"
                 onClick={() => {
@@ -124,7 +159,7 @@ export default function LoginPage() {
                 className={`rounded-lg px-4 py-3 text-sm font-semibold transition ${
                   role === "ambassador"
                     ? "bg-[#202629] text-white"
-                    : "text-gray-500 hover:bg-gray-50"
+                    : "text-gray-700 hover:bg-gray-50"
                 }`}
               >
                 Ambassador
@@ -139,7 +174,7 @@ export default function LoginPage() {
                 className={`rounded-lg px-4 py-3 text-sm font-semibold transition ${
                   role === "admin"
                     ? "bg-[#202629] text-white"
-                    : "text-gray-500 hover:bg-gray-50"
+                    : "text-gray-700 hover:bg-gray-50"
                 }`}
               >
                 Admin
@@ -150,8 +185,9 @@ export default function LoginPage() {
               onSubmit={handleLogin}
               className="mt-6 rounded-2xl border border-gray-200 bg-white p-7 shadow-sm"
             >
+              {/* Email */}
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-700">
                   Email address
                 </label>
 
@@ -163,23 +199,15 @@ export default function LoginPage() {
                     setMessage("");
                   }}
                   placeholder="you@college.edu"
-                  className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none transition focus:border-[#54B9B4]"
+                  className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-[#202629] outline-none transition placeholder:font-medium placeholder:text-gray-500 focus:border-[#54B9B4] focus:ring-1 focus:ring-[#54B9B4]"
                 />
               </div>
 
+              {/* Password */}
               <div className="mt-5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                    Password
-                  </label>
-
-                  <button
-                    type="button"
-                    className="text-xs font-semibold text-[#238C89]"
-                  >
-                    Forgot password?
-                  </button>
-                </div>
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-700">
+                  Password
+                </label>
 
                 <input
                   type="password"
@@ -189,7 +217,7 @@ export default function LoginPage() {
                     setMessage("");
                   }}
                   placeholder="Enter your password"
-                  className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none transition focus:border-[#54B9B4]"
+                  className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-[#202629] outline-none transition placeholder:font-medium placeholder:text-gray-500 focus:border-[#54B9B4] focus:ring-1 focus:ring-[#54B9B4]"
                 />
               </div>
 
@@ -201,14 +229,14 @@ export default function LoginPage() {
               </button>
 
               {message && (
-                <div className="mt-4 rounded-xl bg-[#EDF8F7] p-4 text-sm font-medium text-[#238C89]">
+                <div className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-medium text-red-700">
                   {message}
                 </div>
               )}
             </form>
 
             {role === "ambassador" && (
-              <p className="mt-6 text-center text-sm text-gray-500">
+              <p className="mt-6 text-center text-sm text-gray-600">
                 New to the programme?{" "}
                 <Link
                   href="/register"
@@ -218,11 +246,6 @@ export default function LoginPage() {
                 </Link>
               </p>
             )}
-
-            <p className="mt-8 text-center text-xs leading-5 text-gray-400">
-              Prototype login only. Authentication will be connected to the
-              FastAPI backend in the integration phase.
-            </p>
           </div>
         </section>
       </div>
