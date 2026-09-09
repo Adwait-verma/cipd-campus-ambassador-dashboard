@@ -50,7 +50,7 @@ export default function CreateCampaignPage() {
     try {
       setLoading(true);
 const response = await authFetch(
-  "http://127.0.0.1:8000/admin/campaigns",
+  "https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/campaigns",
   {
     method: "POST",
     body: JSON.stringify({

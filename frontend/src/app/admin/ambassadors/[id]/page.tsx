@@ -147,7 +147,7 @@ export default function AmbassadorDetailPage() {
       setLoading(true);
 
      const response = await authFetch(
-  `http://127.0.0.1:8000/admin/ambassadors/${ambassadorId}`
+  `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/ambassadors/${ambassadorId}`
 );
       const result = await response.json();
 
@@ -186,7 +186,7 @@ export default function AmbassadorDetailPage() {
       setSaving(true);
       setMessage("");
 const response = await authFetch(
-  `http://127.0.0.1:8000/admin/campaign-posts/${postId}/verify`,
+  `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/campaign-posts/${postId}/verify`,
   {
     method: "POST",
     body: JSON.stringify({

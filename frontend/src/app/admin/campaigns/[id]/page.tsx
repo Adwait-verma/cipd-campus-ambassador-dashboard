@@ -48,7 +48,7 @@ export default function AdminCampaignDetailPage() {
       setLoading(true);
 
       const response = await authFetch(
-        `http://127.0.0.1:8000/admin/campaigns/${campaignId}`
+        `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/campaigns/${campaignId}`
       );
 
       const data = await response.json();
@@ -98,7 +98,7 @@ export default function AdminCampaignDetailPage() {
       setRatingResult(null);
 
       const response = await authFetch(
-  `http://127.0.0.1:8000/admin/campaigns/${campaignId}/calculate-ratings`,
+  `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/campaigns/${campaignId}/calculate-ratings`,
   {
     method: "POST",
   }

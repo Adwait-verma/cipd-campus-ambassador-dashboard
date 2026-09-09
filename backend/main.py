@@ -4,13 +4,23 @@ CiPD Ambassador Rating System — Backend
 Run:
     uvicorn main:app --reload
 """
+import base64
+import hashlib
+import hmac
+import json
 import os
+import secrets
+import time
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import quote, urlencode
 
 import jwt
+import requests
+from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from pwdlib import PasswordHash
 from sqlalchemy import create_engine, text
@@ -40,10 +50,217 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ],
+    allow_origin_regex=r"https://.*\.app\.github\.dev",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Instagram OAuth (Instagram API with Instagram Login — Business/Creator
+# accounts only; Meta shut down the old Basic Display API in Dec 2024).
+# ---------------------------------------------------------------------------
+INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID")
+INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET")
+INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY")
+
+# How long an ambassador has to finish the Instagram consent screen
+# before the signed state we handed them stops being accepted.
+OAUTH_STATE_TTL_SECONDS = 600
+
+
+def _get_fernet() -> Fernet:
+    if not TOKEN_ENCRYPTION_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "TOKEN_ENCRYPTION_KEY is not set in the .env file. "
+                "Generate one with: python -c \"from cryptography.fernet "
+                "import Fernet; print(Fernet.generate_key().decode())\""
+            ),
+        )
+    try:
+        return Fernet(TOKEN_ENCRYPTION_KEY.encode())
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="TOKEN_ENCRYPTION_KEY is invalid.",
+        )
+
+
+def encrypt_token(raw_token: str) -> str:
+    """Social access tokens are never stored in plaintext (see schema.sql)."""
+    return _get_fernet().encrypt(raw_token.encode()).decode()
+
+
+def decrypt_token(encrypted_token: str) -> str:
+    try:
+        return _get_fernet().decrypt(encrypted_token.encode()).decode()
+    except InvalidToken:
+        raise HTTPException(
+            status_code=500,
+            detail="Stored access token could not be decrypted.",
+        )
+
+
+def create_oauth_state(user_id: int) -> str:
+    """
+    Signs a short-lived, tamper-proof value carrying the ambassador's
+    user_id through the Instagram redirect round-trip. A browser
+    redirect can't carry our normal Authorization header, so this
+    signed state is what authenticates the callback instead.
+    """
+    payload_b64 = base64.urlsafe_b64encode(
+        json.dumps({
+            "user_id": user_id,
+            "nonce": secrets.token_urlsafe(12),
+            "issued_at": int(time.time()),
+        }).encode()
+    ).decode()
+
+    signature = hmac.new(
+        JWT_SECRET.encode(), payload_b64.encode(), hashlib.sha256
+    ).hexdigest()
+
+    return f"{payload_b64}.{signature}"
+
+
+def verify_oauth_state(state: str) -> int:
+    try:
+        payload_b64, signature = state.split(".", 1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state.")
+
+    expected_signature = hmac.new(
+        JWT_SECRET.encode(), payload_b64.encode(), hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature, expected_signature):
+        raise HTTPException(
+            status_code=400, detail="Invalid OAuth state signature."
+        )
+
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64.encode()))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state.")
+
+    if time.time() - payload["issued_at"] > OAUTH_STATE_TTL_SECONDS:
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth session expired. Please try connecting again.",
+        )
+
+    return int(payload["user_id"])
+
+
+def get_valid_instagram_token(ambassador_id: int, conn) -> str:
+    """
+    Returns a live Instagram access token for this ambassador,
+    transparently refreshing the long-lived token if it's close to
+    expiring (Instagram long-lived tokens last ~60 days).
+    """
+    row = conn.execute(
+        text("""
+            SELECT access_token, token_expires_at
+            FROM social_accounts
+            WHERE ambassador_id = :ambassador_id
+              AND platform = 'INSTAGRAM'
+              AND verified = TRUE
+        """),
+        {"ambassador_id": ambassador_id},
+    ).fetchone()
+
+    if not row or not row._mapping["access_token"]:
+        raise HTTPException(
+            status_code=404,
+            detail="No verified Instagram account connected for this ambassador.",
+        )
+
+    access_token = decrypt_token(row._mapping["access_token"])
+    expires_at = row._mapping["token_expires_at"]
+
+    if expires_at and expires_at - datetime.now(timezone.utc) < timedelta(days=5):
+        try:
+            refresh_response = requests.get(
+                "https://graph.instagram.com/refresh_access_token",
+                params={
+                    "grant_type": "ig_refresh_token",
+                    "access_token": access_token,
+                },
+                timeout=15,
+            )
+            refresh_response.raise_for_status()
+            refresh_data = refresh_response.json()
+            access_token = refresh_data["access_token"]
+
+            conn.execute(
+                text("""
+                    UPDATE social_accounts
+                    SET access_token = :access_token,
+                        token_expires_at = :token_expires_at,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE ambassador_id = :ambassador_id
+                      AND platform = 'INSTAGRAM'
+                """),
+                {
+                    "access_token": encrypt_token(access_token),
+                    "token_expires_at": datetime.now(timezone.utc)
+                    + timedelta(seconds=refresh_data.get("expires_in", 60 * 24 * 60 * 60)),
+                    "ambassador_id": ambassador_id,
+                },
+            )
+        except requests.RequestException:
+            # Refresh failed — fall back to the still-valid existing token
+            # rather than failing the whole request.
+            pass
+
+    return access_token
+
+
+def resolve_instagram_media_id(access_token: str, post_url: str) -> str:
+    """
+    The Graph API only returns media the authenticated professional
+    account owns, and only by internal media ID — there's no endpoint
+    to resolve a public post URL to that ID directly. We page through
+    the account's own media and match on permalink.
+    """
+    normalized_target = post_url.rstrip("/")
+    url = "https://graph.instagram.com/me/media"
+    params = {
+        "fields": "id,permalink",
+        "access_token": access_token,
+        "limit": 50,
+    }
+
+    for _ in range(10):  # cap pagination so a bad match can't loop forever
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        for item in data.get("data", []):
+            if item.get("permalink", "").rstrip("/") == normalized_target:
+                return item["id"]
+
+        next_page = data.get("paging", {}).get("next")
+        if not next_page:
+            break
+
+        url = next_page
+        params = None  # "next" URL already includes all query params
+
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            "Could not find this post on the connected Instagram account. "
+            "The submitted URL must match a post published from the "
+            "connected professional account."
+        ),
+    )
+
+
 def get_current_user(authorization: str | None = Header(default=None)):
     if not authorization:
         raise HTTPException(
@@ -611,6 +828,16 @@ def connect_social_account(
                 detail="Unsupported social platform."
             )
 
+        if platform == "INSTAGRAM":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Instagram must be connected through Instagram OAuth "
+                    "now — use the 'Connect Instagram' button instead of "
+                    "manual connect."
+                ),
+            )
+
         if not data.platform_user_id.strip():
             raise HTTPException(
                 status_code=400,
@@ -818,6 +1045,174 @@ def disconnect_social_account(
             status_code=500,
             detail=f"Failed to disconnect social account: {e}"
         )
+
+
+@app.get("/ambassador/social-accounts/instagram/authorize")
+def instagram_authorize(
+    current_user: dict = Depends(require_ambassador),
+):
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_REDIRECT_URI:
+        raise HTTPException(
+            status_code=500,
+            detail="Instagram integration is not configured on this server.",
+        )
+
+    params = {
+        "client_id": INSTAGRAM_APP_ID,
+        "redirect_uri": INSTAGRAM_REDIRECT_URI,
+        "response_type": "code",
+        # instagram_business_basic is the self-serve scope covering
+        # profile + media read access for Business/Creator accounts.
+        "scope": "instagram_business_basic",
+        "state": create_oauth_state(current_user["user_id"]),
+    }
+
+    return {
+        "authorize_url": "https://api.instagram.com/oauth/authorize?" + urlencode(params)
+    }
+
+
+@app.get("/ambassador/social-accounts/instagram/callback")
+def instagram_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    def redirect_with_error(message: str) -> RedirectResponse:
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/ambassador/social-accounts"
+                f"?instagram=error&message={quote(message)}"
+        )
+
+    if error:
+        return redirect_with_error(error_description or error)
+
+    if not code or not state:
+        return redirect_with_error(
+            "Instagram did not return an authorization code."
+        )
+
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET or not INSTAGRAM_REDIRECT_URI:
+        return redirect_with_error(
+            "Instagram integration is not configured on this server."
+        )
+
+    try:
+        user_id = verify_oauth_state(state)
+    except HTTPException as e:
+        return redirect_with_error(str(e.detail))
+
+    try:
+        # Step 1 — exchange the authorization code for a short-lived
+        # (1 hour) token.
+        token_response = requests.post(
+            "https://api.instagram.com/oauth/access_token",
+            data={
+                "client_id": INSTAGRAM_APP_ID,
+                "client_secret": INSTAGRAM_APP_SECRET,
+                "grant_type": "authorization_code",
+                "redirect_uri": INSTAGRAM_REDIRECT_URI,
+                "code": code,
+            },
+            timeout=15,
+        )
+        token_response.raise_for_status()
+        token_data = token_response.json()
+        short_lived_token = token_data["access_token"]
+
+        # Step 2 — exchange for a long-lived token (~60 days).
+        exchange_response = requests.get(
+            "https://graph.instagram.com/access_token",
+            params={
+                "grant_type": "ig_exchange_token",
+                "client_secret": INSTAGRAM_APP_SECRET,
+                "access_token": short_lived_token,
+            },
+            timeout=15,
+        )
+        exchange_response.raise_for_status()
+        exchange_data = exchange_response.json()
+        long_lived_token = exchange_data["access_token"]
+        expires_in_seconds = exchange_data.get("expires_in", 60 * 24 * 60 * 60)
+
+        # Step 3 — fetch the connected professional account's profile.
+        profile_response = requests.get(
+            "https://graph.instagram.com/me",
+            params={
+                "fields": "id,username,account_type,followers_count",
+                "access_token": long_lived_token,
+            },
+            timeout=15,
+        )
+        profile_response.raise_for_status()
+        profile_data = profile_response.json()
+
+    except requests.RequestException as e:
+        return redirect_with_error(f"Instagram connection failed: {e}")
+    except (KeyError, ValueError):
+        return redirect_with_error("Instagram returned an unexpected response.")
+
+    try:
+        with engine.begin() as conn:
+            ambassador = conn.execute(
+                text("SELECT ambassador_id FROM ambassadors WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            ).fetchone()
+
+            if not ambassador:
+                return redirect_with_error("Ambassador profile not found.")
+
+            ambassador_id = ambassador._mapping["ambassador_id"]
+
+            conn.execute(
+                text("""
+                    INSERT INTO social_accounts (
+                        ambassador_id, platform, platform_user_id,
+                        profile_handle, access_token, token_expires_at,
+                        follower_count, verified, updated_at
+                    )
+                    VALUES (
+                        :ambassador_id, 'INSTAGRAM', :platform_user_id,
+                        :profile_handle, :access_token, :token_expires_at,
+                        :follower_count, TRUE, CURRENT_TIMESTAMP
+                    )
+                    ON CONFLICT (ambassador_id, platform)
+                    DO UPDATE SET
+                        platform_user_id = EXCLUDED.platform_user_id,
+                        profile_handle = EXCLUDED.profile_handle,
+                        access_token = EXCLUDED.access_token,
+                        token_expires_at = EXCLUDED.token_expires_at,
+                        follower_count = EXCLUDED.follower_count,
+                        verified = TRUE,
+                        updated_at = CURRENT_TIMESTAMP
+                """),
+                {
+                    "ambassador_id": ambassador_id,
+                    "platform_user_id": str(profile_data["id"]),
+                    "profile_handle": profile_data.get("username", ""),
+                    "access_token": encrypt_token(long_lived_token),
+                    "token_expires_at": datetime.now(timezone.utc)
+                        + timedelta(seconds=expires_in_seconds),
+                    "follower_count": profile_data.get("followers_count", 0),
+                },
+            )
+
+            conn.execute(
+                text("""
+                    UPDATE ambassadors
+                    SET status = 'ACTIVE'
+                    WHERE ambassador_id = :ambassador_id
+                """),
+                {"ambassador_id": ambassador_id},
+            )
+    except Exception as e:
+        return redirect_with_error(f"Failed to save Instagram connection: {e}")
+
+    return RedirectResponse(
+        url=f"{FRONTEND_URL}/ambassador/social-accounts?instagram=connected"
+    )
+
 
 @app.get("/ambassador/dashboard-data/{user_id}")
 def get_ambassador_dashboard_data(
@@ -2036,6 +2431,146 @@ def verify_campaign_post(
             status_code=500,
             detail=f"Failed to verify post: {e}"
         )
+
+
+@app.post("/admin/campaign-posts/{post_id}/sync-instagram-metrics")
+def sync_instagram_metrics(
+    post_id: int,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    Pulls real reach/likes/comments/shares/saves/views for a submitted
+    Instagram post straight from the Graph API, using the connected
+    ambassador's own OAuth token, and verifies the post automatically
+    since the numbers came directly from the platform.
+    """
+    try:
+        with engine.begin() as conn:
+            post = conn.execute(
+                text("""
+                    SELECT
+                        post_id, ambassador_id, platform,
+                        post_url, platform_post_id
+                    FROM campaign_posts
+                    WHERE post_id = :post_id
+                """),
+                {"post_id": post_id},
+            ).fetchone()
+
+            if not post:
+                raise HTTPException(
+                    status_code=404, detail="Campaign post not found."
+                )
+
+            post_row = post._mapping
+
+            if post_row["platform"] != "INSTAGRAM":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Automatic metric sync is only available for Instagram posts.",
+                )
+
+            access_token = get_valid_instagram_token(
+                post_row["ambassador_id"], conn
+            )
+
+            platform_post_id = post_row["platform_post_id"]
+
+            # A non-numeric platform_post_id means it's still the URL
+            # shortcode captured at submission time, not the real Graph
+            # API media ID — resolve it once, then reuse it going forward.
+            if not platform_post_id.isdigit():
+                platform_post_id = resolve_instagram_media_id(
+                    access_token, post_row["post_url"]
+                )
+
+            try:
+                media_response = requests.get(
+                    f"https://graph.instagram.com/{platform_post_id}",
+                    params={
+                        "fields": "like_count,comments_count",
+                        "access_token": access_token,
+                    },
+                    timeout=15,
+                )
+                media_response.raise_for_status()
+                media_data = media_response.json()
+
+                insights_response = requests.get(
+                    f"https://graph.instagram.com/{platform_post_id}/insights",
+                    params={
+                        "metric": "reach,views,saved,shares",
+                        "access_token": access_token,
+                    },
+                    timeout=15,
+                )
+                insights_response.raise_for_status()
+                insights_data = insights_response.json()
+            except requests.RequestException as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Instagram did not return metrics for this post: {e}",
+                )
+
+            insight_values = {
+                item["name"]: item.get("values", [{}])[-1].get("value", 0)
+                for item in insights_data.get("data", [])
+            }
+
+            snapshot = conn.execute(
+                text("""
+                    INSERT INTO metric_snapshots (
+                        post_id, likes_count, comments_count, shares_count,
+                        views_impressions, reach_count, saves_count
+                    )
+                    VALUES (
+                        :post_id, :likes_count, :comments_count, :shares_count,
+                        :views_impressions, :reach_count, :saves_count
+                    )
+                    RETURNING
+                        snapshot_id, post_id, fetched_at, likes_count,
+                        comments_count, shares_count, views_impressions,
+                        reach_count, saves_count
+                """),
+                {
+                    "post_id": post_id,
+                    "likes_count": media_data.get("like_count", 0),
+                    "comments_count": media_data.get("comments_count", 0),
+                    "shares_count": insight_values.get("shares", 0),
+                    "views_impressions": insight_values.get("views", 0),
+                    "reach_count": insight_values.get("reach", 0),
+                    "saves_count": insight_values.get("saved", 0),
+                },
+            ).fetchone()
+
+            conn.execute(
+                text("""
+                    UPDATE campaign_posts
+                    SET platform_post_id = :platform_post_id,
+                        is_verified = TRUE
+                    WHERE post_id = :post_id
+                """),
+                {
+                    "platform_post_id": platform_post_id,
+                    "post_id": post_id,
+                },
+            )
+
+        return {
+            "message": "Instagram metrics synced and post verified.",
+            "snapshot": dict(snapshot._mapping),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to sync Instagram metrics: {e}",
+        )
+
+
 @app.get("/ambassador/leaderboard")
 def get_ambassador_leaderboard(
     current_user: dict = Depends(require_ambassador),

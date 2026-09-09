@@ -1,383 +1,513 @@
 "use client";
+
 import { authFetch } from "@/lib/api";
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-type AmbassadorStatus = "ACTIVE" | "PENDING" | "SUSPENDED";
+type Platform = "INSTAGRAM" | "LINKEDIN";
 
-type Ambassador = {
-  ambassador_id: number;
+type LoggedInUser = {
   user_id: number;
   full_name: string;
   email: string;
-  college_name: string;
-  graduation_year: number;
-  status: AmbassadorStatus;
-  platforms: string;
-  total_reach: number;
-  normalized_score: number | null;
-  star_rating: number | null;
+  role: string;
 };
 
-function Stars({ count }: { count: number | null }) {
-  if (!count) {
-    return <span className="text-gray-300">—</span>;
-  }
+type SocialAccount = {
+  account_id: number;
+  platform: string;
+  platform_user_id: string;
+  profile_handle: string;
+  follower_count: number;
+  verified: boolean;
+  updated_at: string;
+};
 
-  return (
-    <span className="tracking-wider text-[#F0C568]">
-      {"★".repeat(count)}
-      <span className="text-gray-200">
-        {"★".repeat(5 - count)}
-      </span>
-    </span>
-  );
-}
+const supportedPlatforms: Platform[] = ["INSTAGRAM", "LINKEDIN"];
 
-export default function AdminAmbassadorsPage() {
-  const [ambassadors, setAmbassadors] = useState<Ambassador[]>([]);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("ALL");
+export default function SocialAccountsPage() {
+  const [user, setUser] = useState<LoggedInUser | null>(null);
+  const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [workingPlatform, setWorkingPlatform] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
-    async function loadAmbassadors() {
-      const storedUser = localStorage.getItem("cipd_user");
+    const storedUser = localStorage.getItem("cipd_user");
 
-      if (!storedUser) {
+    if (!storedUser) {
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      const parsedUser: LoggedInUser = JSON.parse(storedUser);
+
+      if (parsedUser.role !== "AMBASSADOR") {
         window.location.href = "/login";
         return;
       }
 
-      try {
-        const user = JSON.parse(storedUser);
-
-        if (user.role !== "ADMIN") {
-          window.location.href = "/login";
-          return;
-        }
-
-        const response = await authFetch(
-  "http://127.0.0.1:8000/admin/ambassadors"
-);
-        const data = await response.json();
-
-        if (!response.ok) {
-          setError(data.detail || "Failed to load ambassadors.");
-          return;
-        }
-
-        setAmbassadors(data.ambassadors);
-      } catch {
-        setError(
-          "Could not connect to the backend. Make sure FastAPI is running."
-        );
-      } finally {
-        setLoading(false);
-      }
+      queueMicrotask(() => setUser(parsedUser));
+      loadAccounts(parsedUser.user_id);
+    } catch {
+      localStorage.removeItem("cipd_user");
+      window.location.href = "/login";
     }
 
-    loadAmbassadors();
+    const params = new URLSearchParams(window.location.search);
+    const instagramStatus = params.get("instagram");
+
+    if (instagramStatus === "connected") {
+      queueMicrotask(() =>
+        setMessage("Instagram connected successfully.")
+      );
+    } else if (instagramStatus === "error") {
+      queueMicrotask(() =>
+        setMessage(
+          params.get("message") || "Failed to connect Instagram."
+        )
+      );
+    }
   }, []);
 
-  const filtered = useMemo(() => {
-    return ambassadors.filter((ambassador) => {
-      const searchValue = search.toLowerCase();
+  async function loadAccounts(userId: number) {
+    try {
+      setLoading(true);
 
-      const matchesSearch =
-        ambassador.full_name.toLowerCase().includes(searchValue) ||
-        ambassador.college_name.toLowerCase().includes(searchValue) ||
-        ambassador.email.toLowerCase().includes(searchValue);
+      const response = await authFetch(
+        `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/social-accounts/${userId}`
+      );
 
-      const matchesStatus =
-        statusFilter === "ALL" ||
-        ambassador.status === statusFilter;
+      const data = await response.json();
 
-      return matchesSearch && matchesStatus;
-    });
-  }, [ambassadors, search, statusFilter]);
+      if (!response.ok) {
+        setMessage(data.detail || "Failed to load social accounts.");
+        return;
+      }
 
-  const activeCount = ambassadors.filter(
-    (ambassador) => ambassador.status === "ACTIVE"
-  ).length;
-
-  const pendingCount = ambassadors.filter(
-    (ambassador) => ambassador.status === "PENDING"
-  ).length;
-
-  function formatReach(reach: number) {
-    if (reach >= 1_000_000) {
-      return `${(reach / 1_000_000).toFixed(1)}M`;
+      setAccounts(data.accounts);
+    } catch {
+      setMessage(
+        "Could not connect to the backend. Make sure FastAPI is running."
+      );
+    } finally {
+      setLoading(false);
     }
-
-    if (reach >= 1_000) {
-      return `${(reach / 1_000).toFixed(1)}K`;
-    }
-
-    return reach.toLocaleString();
   }
+
+  function getAccount(platform: Platform) {
+    return accounts.find((account) => account.platform === platform);
+  }
+
+  async function connectAccount(platform: Platform) {
+    if (!user) return;
+
+    /*
+      TEMPORARY MANUAL PROTOTYPE CONNECTION
+
+      We are not using real Instagram/LinkedIn OAuth yet.
+      This creates a test verified connection in PostgreSQL so we can
+      complete and test the application workflow.
+
+      Later this function will be replaced with OAuth.
+    */
+
+    const platformName =
+      platform === "INSTAGRAM" ? "Instagram" : "LinkedIn";
+
+    const handle = window.prompt(
+      `Enter your ${platformName} username/profile handle:`
+    );
+
+    if (!handle || !handle.trim()) {
+      return;
+    }
+
+    try {
+      setWorkingPlatform(platform);
+      setMessage("");
+
+      const response = await authFetch(
+        "https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/social-accounts/connect",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            user_id: user.user_id,
+            platform,
+            platform_user_id: `${platform.toLowerCase()}_${user.user_id}`,
+            profile_handle: handle.trim(),
+            follower_count: 0,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setMessage(data.detail || "Failed to connect social account.");
+        return;
+      }
+
+      setMessage(
+        `${platformName} connected successfully. Ambassador status: ${data.ambassador_status}.`
+      );
+
+      await loadAccounts(user.user_id);
+    } catch {
+      setMessage("Could not connect to the backend.");
+    } finally {
+      setWorkingPlatform(null);
+    }
+  }
+
+  async function connectInstagram() {
+    if (!user) return;
+
+    try {
+      setWorkingPlatform("INSTAGRAM");
+      setMessage("");
+
+      const response = await authFetch(
+        "https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/social-accounts/instagram/authorize"
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setMessage(
+          data.detail || "Failed to start Instagram connection."
+        );
+        setWorkingPlatform(null);
+        return;
+      }
+
+      window.location.href = data.authorize_url;
+    } catch {
+      setMessage("Could not connect to the backend.");
+      setWorkingPlatform(null);
+    }
+  }
+
+  async function disconnectAccount(platform: Platform) {
+    if (!user) return;
+
+    const platformName =
+      platform === "INSTAGRAM" ? "Instagram" : "LinkedIn";
+
+    const confirmed = window.confirm(
+      `Disconnect your ${platformName} account?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setWorkingPlatform(platform);
+      setMessage("");
+
+      const response = await authFetch(
+        `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/social-accounts/${user.user_id}/${platform}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setMessage(data.detail || "Failed to disconnect social account.");
+        return;
+      }
+
+      setMessage(
+        `${platformName} disconnected. Ambassador status: ${data.ambassador_status}.`
+      );
+
+      await loadAccounts(user.user_id);
+    } catch {
+      setMessage("Could not connect to the backend.");
+    } finally {
+      setWorkingPlatform(null);
+    }
+  }
+
+  const hasVerifiedAccount = accounts.some(
+    (account) => account.verified
+  );
 
   if (loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="text-sm text-gray-500">
-          Loading ambassadors...
+          Loading social accounts...
         </p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-6">
-          <p className="font-semibold text-red-700">
-            Could not load ambassadors
-          </p>
-
-          <p className="mt-2 text-sm text-red-600">
-            {error}
-          </p>
-        </div>
       </div>
     );
   }
 
   return (
     <div className="mx-auto max-w-[1500px]">
-      <section className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <p className="mb-2 text-sm font-medium text-[#9383D8]">
-            AMBASSADORS
-          </p>
-
-          <h1 className="text-3xl font-bold tracking-tight text-[#202629]">
-            Ambassador management
-          </h1>
-
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-500">
-            Review registered ambassadors, social-account eligibility,
-            campaign reach, ratings and verification status.
-          </p>
-        </div>
-      </section>
-
-      {/* Real summary cards */}
-      <section className="mb-6 grid grid-cols-1 gap-5 md:grid-cols-3">
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-            Total Registered
-          </p>
-
-          <p className="mt-3 text-3xl font-bold text-[#202629]">
-            {ambassadors.length}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-            Active Ambassadors
-          </p>
-
-          <p className="mt-3 text-3xl font-bold text-[#238C89]">
-            {activeCount}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-            Pending
-          </p>
-
-          <p className="mt-3 text-3xl font-bold text-[#C28A18]">
-            {pendingCount}
-          </p>
-        </div>
-      </section>
-
-      {/* Rule */}
-      <section className="mb-6 rounded-2xl border border-[#BDE3E0] bg-[#EDF8F7] p-5">
-        <p className="font-semibold text-[#202629]">
-          Active Ambassador rule
+      {/* Header */}
+      <section className="mb-8">
+        <p className="mb-2 text-sm font-medium text-[#238C89]">
+          SOCIAL ACCOUNTS
         </p>
 
-        <p className="mt-2 text-sm leading-6 text-gray-500">
-          A registered user becomes an active Campus Ambassador only when at
-          least one supported social account is connected and verified.
-          Pending ambassadors are excluded from scoring, rankings and awards.
+        <h1 className="text-3xl font-bold tracking-tight text-[#202629]">
+          Connected social platforms
+        </h1>
+
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-500">
+          Connect the social accounts you use for CiPD campaigns. Only users
+          with at least one verified social account are counted as active
+          Campus Ambassadors.
         </p>
       </section>
 
-      {/* Filters */}
-      <section className="mb-6 flex flex-col gap-4 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm md:flex-row md:items-center md:justify-between">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search name, college or email..."
-          className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#9383D8] md:max-w-md"
-        />
+      {/* Status message */}
+      {message && (
+        <section className="mb-6 rounded-xl border border-gray-200 bg-white p-4">
+          <p className="text-sm font-medium text-[#202629]">{message}</p>
+        </section>
+      )}
 
-        <div className="flex flex-wrap gap-3">
-          {["ALL", "ACTIVE", "PENDING", "SUSPENDED"].map(
-            (status) => (
-              <button
-                key={status}
-                onClick={() => setStatusFilter(status)}
-                className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-                  statusFilter === status
-                    ? "bg-[#202629] text-white"
-                    : "border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
+      {/* Ambassador eligibility */}
+      <section
+        className={`mb-7 rounded-2xl border p-6 ${
+          hasVerifiedAccount
+            ? "border-[#BDE3E0] bg-[#EDF8F7]"
+            : "border-[#F1D9A7] bg-[#FFF9EC]"
+        }`}
+      >
+        <div className="flex items-start gap-4">
+          <div
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full font-bold text-white ${
+              hasVerifiedAccount ? "bg-[#54B9B4]" : "bg-[#F0C568]"
+            }`}
+          >
+            {hasVerifiedAccount ? "✓" : "!"}
+          </div>
+
+          <div>
+            <div className="flex items-center gap-3">
+              <p className="text-lg font-bold text-[#202629]">
+                {hasVerifiedAccount
+                  ? "Active Campus Ambassador"
+                  : "Pending social connection"}
+              </p>
+
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-bold ${
+                  hasVerifiedAccount
+                    ? "bg-[#DDF3F1] text-[#238C89]"
+                    : "bg-[#FCECC8] text-[#9A6A00]"
                 }`}
               >
-                {status === "ALL"
-                  ? "All"
-                  : status.charAt(0) +
-                    status.slice(1).toLowerCase()}
-              </button>
-            )
-          )}
+                {hasVerifiedAccount ? "ACTIVE" : "PENDING"}
+              </span>
+            </div>
+
+            <p className="mt-2 text-sm leading-6 text-gray-500">
+              {hasVerifiedAccount
+                ? "At least one connected social account is verified. Your valid campaign engagement can be included in scoring and normalization."
+                : "Your registration exists, but you are not counted as an active Campus Ambassador until a supported social account is connected and verified."}
+            </p>
+          </div>
         </div>
       </section>
 
-      {/* Real table */}
-      <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1050px]">
-            <thead>
-              <tr className="border-b border-gray-100 bg-[#F8FAFA] text-left">
-                {[
-                  "Ambassador",
-                  "College",
-                  "Social",
-                  "Reach",
-                  "Score",
-                  "Rating",
-                  "Status",
-                  "",
-                ].map((heading) => (
-                  <th
-                    key={heading}
-                    className="px-6 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400"
-                  >
-                    {heading}
-                  </th>
-                ))}
-              </tr>
-            </thead>
+      {/* Accounts */}
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        {supportedPlatforms.map((platform) => {
+          const account = getAccount(platform);
+          const connected = Boolean(account);
 
-            <tbody>
-              {filtered.map((ambassador) => (
-                <tr
-                  key={ambassador.ambassador_id}
-                  className="border-b border-gray-100 transition hover:bg-gray-50"
-                >
-                  <td className="px-6 py-5">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#202629] text-xs font-bold text-white">
-                        {ambassador.full_name
-                          .split(" ")
-                          .map((part) => part[0])
-                          .join("")
-                          .slice(0, 2)
-                          .toUpperCase()}
+          const platformName =
+            platform === "INSTAGRAM" ? "Instagram" : "LinkedIn";
+
+          return (
+            <div
+              key={platform}
+              className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                  <div
+                    className={`flex h-12 w-12 items-center justify-center rounded-xl font-bold text-white ${
+                      platform === "INSTAGRAM"
+                        ? "bg-[#E98AAE]"
+                        : "bg-[#9383D8]"
+                    }`}
+                  >
+                    {platform === "INSTAGRAM" ? "IG" : "in"}
+                  </div>
+
+                  <div>
+                    <h2 className="text-xl font-bold text-[#202629]">
+                      {platformName}
+                    </h2>
+
+                    <p className="mt-1 text-sm text-gray-400">
+                      {connected
+                        ? "Connected account"
+                        : "No account connected"}
+                    </p>
+                  </div>
+                </div>
+
+                {connected ? (
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                      account?.verified
+                        ? "bg-green-50 text-green-700"
+                        : "bg-yellow-50 text-yellow-700"
+                    }`}
+                  >
+                    {account?.verified ? "VERIFIED" : "PENDING"}
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-500">
+                    NOT CONNECTED
+                  </span>
+                )}
+              </div>
+
+              {account ? (
+                <>
+                  <div className="mt-6 rounded-xl bg-[#F8FAFA] p-5">
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <p className="text-xs text-gray-400">Account</p>
+
+                        <p className="mt-1 font-semibold text-[#202629]">
+                          {account.profile_handle}
+                        </p>
                       </div>
 
                       <div>
-                        <p className="font-semibold text-[#202629]">
-                          {ambassador.full_name}
-                        </p>
+                        <p className="text-xs text-gray-400">Followers</p>
 
-                        <p className="mt-1 text-xs text-gray-400">
-                          {ambassador.email}
+                        <p className="mt-1 font-semibold text-[#202629]">
+                          {account.follower_count.toLocaleString()}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-gray-400">Last sync</p>
+
+                        <p className="mt-1 font-semibold text-[#202629]">
+                          {new Date(account.updated_at).toLocaleString()}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-gray-400">Status</p>
+
+                        <p
+                          className={`mt-1 font-semibold ${
+                            account.verified
+                              ? "text-green-700"
+                              : "text-yellow-700"
+                          }`}
+                        >
+                          {account.verified
+                            ? "Ready for scoring"
+                            : "Verification pending"}
                         </p>
                       </div>
                     </div>
-                  </td>
+                  </div>
 
-                  <td className="px-6 py-5">
-                    <p className="text-sm text-gray-500">
-                      {ambassador.college_name}
+                  <button
+                    onClick={() => disconnectAccount(platform)}
+                    disabled={workingPlatform === platform}
+                    className="mt-5 rounded-xl border border-gray-200 px-5 py-3 text-sm font-semibold text-gray-500 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {workingPlatform === platform
+                      ? "Disconnecting..."
+                      : `Disconnect ${platformName}`}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="mt-6 rounded-xl border border-dashed border-gray-300 bg-[#F8FAFA] p-6">
+                    <p className="text-sm font-semibold text-[#202629]">
+                      {platform === "INSTAGRAM"
+                        ? "Connect with Instagram"
+                        : `Manually connect ${platformName}`}
                     </p>
 
-                    <p className="mt-1 text-xs text-gray-400">
-                      Graduation {ambassador.graduation_year}
+                    <p className="mt-2 text-sm leading-6 text-gray-500">
+                      {platform === "INSTAGRAM"
+                        ? "You'll be redirected to Instagram to authorize CiPD. Your account must be a Business or Creator account — personal accounts can't be connected."
+                        : "Connect this account to allow CiPD to use permitted campaign engagement metrics for performance evaluation."}
                     </p>
-                  </td>
+                  </div>
 
-                  <td className="px-6 py-5">
-                    {ambassador.platforms ? (
-                      <span className="rounded-full bg-[#DDF3F1] px-3 py-1 text-xs font-semibold text-[#238C89]">
-                        {ambassador.platforms}
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-500">
-                        Not connected
-                      </span>
-                    )}
-                  </td>
+                  <button
+                    onClick={() =>
+                      platform === "INSTAGRAM"
+                        ? connectInstagram()
+                        : connectAccount(platform)
+                    }
+                    disabled={workingPlatform === platform}
+                    className="mt-5 rounded-xl bg-[#202629] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#343B3E] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {workingPlatform === platform
+                      ? "Connecting..."
+                      : platform === "INSTAGRAM"
+                        ? "Connect Instagram"
+                        : `Connect ${platformName} (prototype)`}
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </section>
 
-                  <td className="px-6 py-5 font-semibold text-[#202629]">
-                    {formatReach(ambassador.total_reach)}
-                  </td>
+      {/* Data policy */}
+      <section className="mt-7 rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
+        <h2 className="text-xl font-bold text-[#202629]">
+          Social data & eligibility
+        </h2>
 
-                  <td className="px-6 py-5">
-                    {ambassador.normalized_score === null ? (
-                      <span className="text-gray-300">
-                        —
-                      </span>
-                    ) : (
-                      <span className="rounded-lg bg-[#F8FAFA] px-3 py-2 text-sm font-bold text-[#202629]">
-                        {Number(
-                          ambassador.normalized_score
-                        ).toFixed(2)}
-                      </span>
-                    )}
-                  </td>
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+          {[
+            "Registration alone does not make a user an active Campus Ambassador.",
+            "At least one supported social account must be connected and verified.",
+            "Only verified campaign posts with valid engagement metrics enter normalization.",
+            "Disconnected accounts are excluded from active ambassador counts.",
+            "OAuth tokens must remain server-side and should never be exposed in the frontend.",
+            "The final product will show the last metric synchronization time for transparency.",
+          ].map((item) => (
+            <div
+              key={item}
+              className="flex gap-3 rounded-xl bg-[#F8FAFA] p-4"
+            >
+              <span className="mt-0.5 text-[#54B9B4]">✓</span>
 
-                  <td className="px-6 py-5">
-                    <Stars count={ambassador.star_rating} />
-                  </td>
-
-                  <td className="px-6 py-5">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        ambassador.status === "ACTIVE"
-                          ? "bg-green-50 text-green-700"
-                          : ambassador.status === "PENDING"
-                            ? "bg-yellow-50 text-yellow-700"
-                            : "bg-red-50 text-red-700"
-                      }`}
-                    >
-                      {ambassador.status}
-                    </span>
-                  </td>
-
-                  <td className="px-6 py-5 text-right">
-                    <Link
-                      href={`/admin/ambassadors/${ambassador.ambassador_id}`}
-                      className="text-sm font-semibold text-[#9383D8]"
-                    >
-                      View →
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              <p className="text-sm leading-6 text-gray-500">{item}</p>
+            </div>
+          ))}
         </div>
+      </section>
 
-        {filtered.length === 0 && (
-          <div className="p-12 text-center">
-            <p className="font-semibold text-[#202629]">
-              No ambassadors found
-            </p>
+      {/* Prototype warning */}
+      <section className="mt-6 rounded-2xl border border-[#E5DFF6] bg-[#F6F3FC] p-5">
+        <p className="font-semibold text-[#202629]">
+          Connection status
+        </p>
 
-            <p className="mt-2 text-sm text-gray-400">
-              Try changing the search or status filter.
-            </p>
-          </div>
-        )}
+        <p className="mt-2 text-sm leading-6 text-gray-500">
+          Instagram now uses real OAuth — connecting redirects you to
+          Instagram to authorize CiPD, and engagement metrics are pulled
+          from the Graph API for connected Business/Creator accounts.
+          LinkedIn is still a manual prototype connection; entering a
+          profile handle simulates verification until real LinkedIn OAuth
+          is added.
+        </p>
       </section>
     </div>
   );

@@ -175,10 +175,10 @@ export default function PerformancePage() {
         const [dashboardResponse, leaderboardResponse] =
           await Promise.all([
             authFetch(
-              `http://127.0.0.1:8000/ambassador/dashboard-data/${user.user_id}`
+              `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/dashboard-data/${user.user_id}`
             ),
             authFetch(
-              "http://127.0.0.1:8000/ambassador/leaderboard"
+              "https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/leaderboard"
             ),
           ]);
 

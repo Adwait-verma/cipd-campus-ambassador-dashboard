@@ -53,7 +53,7 @@ export default function ProfilePage() {
         }
 
         const response = await authFetch(
-          `http://127.0.0.1:8000/ambassador/profile/${user.user_id}`
+          `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/profile/${user.user_id}`
         );
 
         const data = await response.json();
@@ -139,7 +139,7 @@ export default function ProfilePage() {
       setSaving(true);
 
       const response = await authFetch(
-        `http://127.0.0.1:8000/ambassador/profile/${profile.user_id}`,
+        `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/profile/${profile.user_id}`,
         {
           method: "PUT",
           body: JSON.stringify({

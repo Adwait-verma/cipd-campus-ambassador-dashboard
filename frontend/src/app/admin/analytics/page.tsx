@@ -74,7 +74,7 @@ export default function AdminAnalyticsPage() {
         }
 
        const response = await authFetch(
-  "http://127.0.0.1:8000/admin/analytics"
+  "https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/analytics"
 );
 
         const result = await response.json();

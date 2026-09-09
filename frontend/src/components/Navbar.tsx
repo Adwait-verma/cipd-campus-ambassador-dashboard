@@ -36,7 +36,7 @@ export default function Navbar() {
         const user: LoggedInUser = JSON.parse(storedUser);
 
         const response = await authFetch(
-          `http://127.0.0.1:8000/ambassador/profile/${user.user_id}`
+          `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/profile/${user.user_id}`
         );
 
         const data = await response.json();

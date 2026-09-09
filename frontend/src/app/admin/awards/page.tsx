@@ -63,7 +63,7 @@ export default function AwardsPage() {
         }
 
        const response = await authFetch(
-  "http://127.0.0.1:8000/admin/awards"
+  "https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/awards"
 );
 
         const result = await response.json();

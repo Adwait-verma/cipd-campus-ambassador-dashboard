@@ -32,7 +32,7 @@ export default function CampaignsPage() {
     async function loadCampaigns() {
       try {
         const response = await authFetch(
-          "http://127.0.0.1:8000/ambassador/campaigns"
+          "https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/campaigns"
         );
 
         const data = await response.json();

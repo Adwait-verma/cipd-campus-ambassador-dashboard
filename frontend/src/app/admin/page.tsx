@@ -56,7 +56,7 @@ export default function AdminOverviewPage() {
         }
 
         const response = await authFetch(
-  "http://127.0.0.1:8000/admin/overview"
+  "https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/overview"
 );
 
         const result = await response.json();

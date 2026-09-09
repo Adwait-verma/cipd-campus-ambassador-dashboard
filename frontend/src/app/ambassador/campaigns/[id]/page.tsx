@@ -85,7 +85,7 @@ export default function CampaignDetailPage() {
       setLoading(true);
 
       const campaignResponse = await authFetch(
-        `http://127.0.0.1:8000/ambassador/campaigns/${campaignId}`
+        `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/campaigns/${campaignId}`
       );
 
       const campaignData = await campaignResponse.json();
@@ -98,7 +98,7 @@ export default function CampaignDetailPage() {
       setCampaign(campaignData.campaign);
 
       const submissionResponse = await authFetch(
-        `http://127.0.0.1:8000/ambassador/campaigns/${campaignId}/submission/${userId}`
+        `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/campaigns/${campaignId}/submission/${userId}`
       );
 
       const submissionData = await submissionResponse.json();
@@ -126,7 +126,7 @@ export default function CampaignDetailPage() {
       setMessage("");
 
       const response = await authFetch(
-        "http://127.0.0.1:8000/ambassador/campaign-posts",
+        "https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/ambassador/campaign-posts",
         {
           method: "POST",
           body: JSON.stringify({
