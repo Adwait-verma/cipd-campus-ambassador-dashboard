@@ -38,7 +38,7 @@ export default function ProfilePage() {
   useEffect(() => {
     async function loadProfile() {
       try {
-        const stored = localStorage.getItem("cipd_user");
+        const stored = sessionStorage.getItem("cipd_user");
 
         if (!stored) {
           window.location.href = "/login";
@@ -171,13 +171,13 @@ export default function ProfilePage() {
           updatedProfile.graduation_year.toString(),
       });
 
-      const stored = localStorage.getItem("cipd_user");
+      const stored = sessionStorage.getItem("cipd_user");
 
       if (stored) {
         const currentUser: StoredUser =
           JSON.parse(stored);
 
-        localStorage.setItem(
+        sessionStorage.setItem(
           "cipd_user",
           JSON.stringify({
             ...currentUser,

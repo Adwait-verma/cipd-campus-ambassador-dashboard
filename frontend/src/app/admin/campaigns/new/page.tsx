@@ -121,7 +121,7 @@ const response = await authFetch(
       <section className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <div className="md:col-span-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
               Campaign title
             </label>
 
@@ -136,7 +136,7 @@ const response = await authFetch(
           </div>
 
           <div className="md:col-span-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
               Description
             </label>
 
@@ -145,14 +145,19 @@ const response = await authFetch(
               onChange={(e) =>
                 updateField("description", e.target.value)
               }
-              placeholder="Explain what ambassadors need to promote..."
+              placeholder="Describe the programme or event, intended audience, key message, approved caption and any resource links. Explain what ambassadors should publish."
               rows={5}
               className="mt-2 w-full resize-none rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
             />
+            <p className="mt-2 text-xs leading-5 text-gray-600">
+              Include the audience, approved wording and links to any posters or
+              resources here. Use the fields below for dates, the required hashtag
+              and the official page ambassadors should promote.
+            </p>
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
               Start date
             </label>
 
@@ -167,7 +172,7 @@ const response = await authFetch(
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
               End date
             </label>
 
@@ -182,7 +187,7 @@ const response = await authFetch(
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
               Required hashtag
             </label>
 
@@ -197,7 +202,7 @@ const response = await authFetch(
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
               Campaign status
             </label>
 
@@ -214,7 +219,7 @@ const response = await authFetch(
           </div>
 
           <div className="md:col-span-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
               Official CiPD content URL
             </label>
 

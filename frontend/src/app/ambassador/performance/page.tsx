@@ -38,7 +38,7 @@ type DashboardData = {
   } | null;
 
   ranking: {
-    current_rank: number;
+    current_rank: number | null;
     total_ranked: number;
   } | null;
 };
@@ -158,7 +158,7 @@ export default function PerformancePage() {
   useEffect(() => {
     async function loadPerformance() {
       try {
-        const stored = localStorage.getItem("cipd_user");
+        const stored = sessionStorage.getItem("cipd_user");
 
         if (!stored) {
           window.location.href = "/login";
@@ -293,8 +293,9 @@ export default function PerformancePage() {
               </p>
 
               <p className="mt-5 text-sm leading-6 text-gray-300">
-                Submit a campaign post and wait for verified
-                metrics before a rating is calculated.
+                A verified social account makes you eligible. Your campaign
+                post also needs verified metrics, then an administrator must
+                recalculate that campaign’s ratings.
               </p>
             </>
           )}
@@ -303,7 +304,7 @@ export default function PerformancePage() {
         <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
           <div className="mb-5 h-1.5 w-10 rounded-full bg-[#54B9B4]" />
 
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
             Normalized Score
           </p>
 
@@ -313,7 +314,7 @@ export default function PerformancePage() {
               : "—"}
           </p>
 
-          <p className="mt-2 text-xs text-gray-400">
+          <p className="mt-2 text-xs text-gray-600">
             Latest calculated score
           </p>
         </div>
@@ -321,7 +322,7 @@ export default function PerformancePage() {
         <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
           <div className="mb-5 h-1.5 w-10 rounded-full bg-[#9383D8]" />
 
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
             Percentile
           </p>
 
@@ -331,7 +332,7 @@ export default function PerformancePage() {
               : "—"}
           </p>
 
-          <p className="mt-2 text-xs text-gray-400">
+          <p className="mt-2 text-xs text-gray-600">
             Among eligible ambassadors
           </p>
         </div>
@@ -339,16 +340,16 @@ export default function PerformancePage() {
         <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
           <div className="mb-5 h-1.5 w-10 rounded-full bg-[#E98AAE]" />
 
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
             Current Rank
           </p>
 
           <p className="mt-4 text-3xl font-bold text-[#202629]">
-            {ranking ? `#${ranking.current_rank}` : "—"}
+            {ranking?.current_rank != null ? `#${ranking.current_rank}` : "—"}
           </p>
 
-          <p className="mt-2 text-xs text-gray-400">
-            {ranking
+          <p className="mt-2 text-xs text-gray-600">
+            {ranking?.current_rank != null
               ? `of ${ranking.total_ranked} ranked ambassadors`
               : "No calculated ranking yet"}
           </p>
@@ -358,7 +359,7 @@ export default function PerformancePage() {
       {/* Real metrics */}
       <section className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-4">
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
             Total Reach
           </p>
 
@@ -368,7 +369,7 @@ export default function PerformancePage() {
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
             Engagement Rate
           </p>
 
@@ -378,7 +379,7 @@ export default function PerformancePage() {
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
             Engagements
           </p>
 
@@ -388,7 +389,7 @@ export default function PerformancePage() {
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
             Published Posts
           </p>
 
@@ -482,7 +483,7 @@ export default function PerformancePage() {
             Ambassador Leaderboard
           </h2>
 
-          <p className="mt-1 text-sm text-gray-400">
+          <p className="mt-1 text-sm text-gray-600">
             Current ranking from calculated ambassador ratings
           </p>
         </div>
@@ -491,31 +492,31 @@ export default function PerformancePage() {
           <table className="w-full min-w-[850px]">
             <thead>
               <tr className="border-b border-gray-100 bg-[#F8FAFA] text-left">
-                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
                   Rank
                 </th>
 
-                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
                   Ambassador
                 </th>
 
-                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
                   College
                 </th>
 
-                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
                   Reach
                 </th>
 
-                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
                   Score
                 </th>
 
-                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
                   Percentile
                 </th>
 
-                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <th className="px-7 py-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
                   Rating
                 </th>
               </tr>
@@ -602,7 +603,7 @@ export default function PerformancePage() {
                 <tr>
                   <td
                     colSpan={7}
-                    className="px-7 py-10 text-center text-sm text-gray-400"
+                    className="px-7 py-10 text-center text-sm text-gray-600"
                   >
                     No calculated ratings are available yet.
                   </td>
@@ -615,7 +616,7 @@ export default function PerformancePage() {
 
       {/* Methodology */}
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
           Methodology note
         </p>
 

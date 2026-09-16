@@ -30,7 +30,7 @@ export default function AdminCampaignsPage() {
 
   useEffect(() => {
     async function loadCampaigns() {
-      const storedUser = localStorage.getItem("cipd_user");
+      const storedUser = sessionStorage.getItem("cipd_user");
 
       if (!storedUser) {
         window.location.href = "/login";

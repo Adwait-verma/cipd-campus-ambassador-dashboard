@@ -91,5 +91,5 @@ npm run build
 - Social account linking is a manual prototype and does not perform real OAuth authorization.
 - Social metrics are entered and verified manually by an administrator; no platform metrics API is connected.
 - The frontend API URL and backend CORS origins target local development (`localhost`/`127.0.0.1`). Configure both explicitly before deployment.
-- The JWT is currently stored in browser `localStorage`. A production deployment should use a hardened session strategy, such as secure, HTTP-only cookies with appropriate CSRF protection.
+- The JWT and user profile are stored in browser `sessionStorage`, separately for each tab/window. You can sign in as admin in one window and ambassador in another; refreshing preserves each login, and logging out affects only that window. A fresh window requires sign-in, and token expiry still applies. After upgrading from the old shared storage, sign in again once in each window. This storage is still accessible to JavaScript; a production deployment should use a hardened session strategy, such as secure, HTTP-only cookies with appropriate CSRF protection.
 - Social access tokens must remain server-side and must never be returned to the frontend, logged, or committed.

@@ -50,7 +50,6 @@ def get_current_user(authorization: str | None = Header(default=None)):
             status_code=401,
             detail="Authorization token is required.",
         )
-
     if not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
@@ -1301,10 +1300,33 @@ def get_campaign_submission(
                         COALESCE(ls.comments_count, 0) AS comments_count,
                         COALESCE(ls.shares_count, 0) AS shares_count,
                         COALESCE(ls.saves_count, 0) AS saves_count,
-                        ls.fetched_at
+                        ls.fetched_at,
+                        a.status AS ambassador_status,
+                        rating.calculated_at AS rating_calculated_at,
+                        rating.star_rating AS rating_star_rating,
+                        campaign_metrics.latest_campaign_metrics_at
                     FROM campaign_posts cp
                     LEFT JOIN latest_snapshot ls
                         ON ls.post_id = cp.post_id
+                    JOIN ambassadors a ON a.ambassador_id = cp.ambassador_id
+                    LEFT JOIN LATERAL (
+                        SELECT calculated_at, star_rating
+                        FROM ambassador_ratings
+                        WHERE ambassador_id = cp.ambassador_id
+                          AND campaign_id = cp.campaign_id
+                        ORDER BY calculated_at DESC, rating_id DESC
+                        LIMIT 1
+                    ) rating ON TRUE
+                    LEFT JOIN LATERAL (
+                        SELECT MAX(ms.fetched_at) AS latest_campaign_metrics_at
+                        FROM metric_snapshots ms
+                        JOIN campaign_posts other_post ON other_post.post_id = ms.post_id
+                        JOIN ambassadors other_ambassador
+                            ON other_ambassador.ambassador_id = other_post.ambassador_id
+                        WHERE other_post.campaign_id = cp.campaign_id
+                          AND other_post.is_verified = TRUE
+                          AND other_ambassador.status = 'ACTIVE'
+                    ) campaign_metrics ON TRUE
                     WHERE cp.ambassador_id = :ambassador_id
                       AND cp.campaign_id = :campaign_id
                     ORDER BY

@@ -77,7 +77,7 @@ export default function AmbassadorDashboard() {
 
   useEffect(() => {
     async function loadDashboard() {
-      const storedUser = localStorage.getItem("cipd_user");
+      const storedUser = sessionStorage.getItem("cipd_user");
 
       if (!storedUser) {
         window.location.href = "/login";

@@ -10,7 +10,7 @@ export default function AdminNavbar() {
   const [admin, setAdmin] = useState<AdminUser | null>(null);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("cipd_user");
+    const storedUser = sessionStorage.getItem("cipd_user");
 
     if (!storedUser) {
       return;

@@ -32,7 +32,7 @@ export default function SocialAccountsPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("cipd_user");
+    const storedUser = sessionStorage.getItem("cipd_user");
 
     if (!storedUser) {
       window.location.href = "/login";
@@ -50,7 +50,7 @@ export default function SocialAccountsPage() {
       queueMicrotask(() => setUser(parsedUser));
       loadAccounts(parsedUser.user_id);
     } catch {
-      localStorage.removeItem("cipd_user");
+      sessionStorage.removeItem("cipd_user");
       window.location.href = "/login";
     }
   }, []);

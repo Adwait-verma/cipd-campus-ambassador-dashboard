@@ -81,7 +81,7 @@ type MetricForm = {
 
 function Stars({ count }: { count: number | null }) {
   if (!count) {
-    return <span className="text-sm text-gray-400">Not rated</span>;
+    return <span className="text-sm text-gray-600">Not rated</span>;
   }
 
   return (
@@ -120,7 +120,7 @@ export default function AmbassadorDetailPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("cipd_user");
+    const storedUser = sessionStorage.getItem("cipd_user");
 
     if (!storedUser) {
       window.location.href = "/login";
@@ -137,7 +137,7 @@ export default function AmbassadorDetailPage() {
 
       loadAmbassador();
     } catch {
-      localStorage.removeItem("cipd_user");
+      sessionStorage.removeItem("cipd_user");
       window.location.href = "/login";
     }
   }, [ambassadorId]);
@@ -207,7 +207,7 @@ const response = await authFetch(
         return;
       }
 
-      setMessage("Post verified and metrics saved successfully.");
+      setMessage("Post verified and metrics saved. Open this campaign under Campaigns and click Recalculate Ratings to update performance and the leaderboard.");
       setSelectedPostId(null);
 
       await loadAmbassador();
@@ -307,7 +307,7 @@ const response = await authFetch(
               {ambassador.graduation_year}
             </p>
 
-            <p className="mt-1 text-sm text-gray-400">
+            <p className="mt-1 text-sm text-gray-600">
               {ambassador.email}
             </p>
           </div>
@@ -391,7 +391,7 @@ const response = await authFetch(
               style={{ backgroundColor: color }}
             />
 
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
               {label}
             </p>
 
@@ -424,7 +424,7 @@ const response = await authFetch(
                 key={label}
                 className="flex items-center justify-between border-b border-gray-100 pb-4"
               >
-                <span className="text-sm text-gray-400">
+                <span className="text-sm text-gray-600">
                   {label}
                 </span>
 
@@ -485,7 +485,7 @@ const response = await authFetch(
 
                   <div className="mt-5 grid grid-cols-2 gap-4">
                     <div>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-gray-600">
                         Followers
                       </p>
 
@@ -495,7 +495,7 @@ const response = await authFetch(
                     </div>
 
                     <div>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-gray-600">
                         Last updated
                       </p>
 
@@ -513,7 +513,7 @@ const response = await authFetch(
 
       {/* Rating */}
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
           Current Award
         </p>
 
@@ -522,7 +522,7 @@ const response = await authFetch(
         </div>
 
         {!rating && (
-          <p className="mt-2 text-sm text-gray-400">
+          <p className="mt-2 text-sm text-gray-600">
             No rating has been calculated yet.
           </p>
         )}
@@ -535,7 +535,7 @@ const response = await authFetch(
             Campaign submissions
           </h2>
 
-          <p className="mt-1 text-sm text-gray-400">
+          <p className="mt-1 text-sm text-gray-600">
             Review submitted social posts and record verified metrics.
           </p>
         </div>
@@ -572,7 +572,7 @@ const response = await authFetch(
                       {post.post_url}
                     </a>
 
-                    <p className="mt-2 text-xs text-gray-400">
+                    <p className="mt-2 text-xs text-gray-600">
                       Submitted: {formatDate(post.published_at)}
                     </p>
                   </div>
@@ -601,7 +601,7 @@ const response = await authFetch(
                       key={String(label)}
                       className="rounded-xl bg-[#F8FAFA] p-4"
                     >
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-gray-600">
                         {label}
                       </p>
 
@@ -641,7 +641,7 @@ const response = await authFetch(
                         ["Views / Impressions", "views_impressions"],
                       ].map(([label, key]) => (
                         <div key={key}>
-                          <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                          <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                             {label}
                           </label>
 

@@ -58,7 +58,7 @@ export default function AdminAnalyticsPage() {
   useEffect(() => {
     async function loadAnalytics() {
       const storedUser =
-        localStorage.getItem("cipd_user");
+        sessionStorage.getItem("cipd_user");
 
       if (!storedUser) {
         window.location.href = "/login";

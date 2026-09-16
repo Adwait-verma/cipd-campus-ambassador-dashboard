@@ -26,7 +26,7 @@ export default function Navbar() {
 
   useEffect(() => {
     async function loadProfile() {
-      const storedUser = localStorage.getItem("cipd_user");
+      const storedUser = sessionStorage.getItem("cipd_user");
 
       if (!storedUser) {
         return;

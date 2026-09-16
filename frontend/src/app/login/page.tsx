@@ -52,8 +52,12 @@ export default function LoginPage() {
         return;
       }
 
-      localStorage.setItem("cipd_user", JSON.stringify(data.user));
-      localStorage.setItem("cipd_token", data.access_token);
+      sessionStorage.setItem("cipd_user", JSON.stringify(data.user));
+      sessionStorage.setItem("cipd_token", data.access_token);
+
+      // Discard credentials left by the previous shared-window storage.
+      localStorage.removeItem("cipd_user");
+      localStorage.removeItem("cipd_token");
 
       if (data.user.role === "ADMIN") {
         window.location.href = "/admin";
@@ -92,9 +96,9 @@ export default function LoginPage() {
             </h1>
 
             <p className="mt-6 max-w-lg text-base leading-7 text-gray-300">
-              Promote CiPD campaigns, connect your social platforms, track
-              verified engagement and earn recognition based on normalized
-              performance.
+              Help students discover CiPD programmes, workshops and product
+              innovation at IIIT-Delhi. Share official campaigns, track verified
+              engagement and earn recognition for your campus outreach.
             </p>
 
             <div className="mt-10 grid grid-cols-3 gap-4">
@@ -122,7 +126,10 @@ export default function LoginPage() {
           </div>
 
           <p className="text-xs text-gray-500">
-            Centre for Innovation, Policy and Digital Transformation
+            Centre for intelligent Product Development · IIIT-Delhi
+            <a href="https://cipd.iiitd.ac.in/" target="_blank" rel="noreferrer" className="mt-2 block text-[#54B9B4] underline">
+              Visit the official CiPD website ↗
+            </a>
           </p>
         </section>
 

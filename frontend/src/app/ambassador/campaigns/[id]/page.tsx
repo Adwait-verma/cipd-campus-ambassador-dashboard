@@ -1,6 +1,7 @@
 "use client";
 
 import { authFetch } from "@/lib/api";
+import { submissionProgress } from "@/lib/submission-progress";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -37,6 +38,10 @@ type Submission = {
   shares_count: number;
   saves_count: number;
   fetched_at: string | null;
+  ambassador_status: string;
+  rating_calculated_at: string | null;
+  rating_star_rating: number | null;
+  latest_campaign_metrics_at: string | null;
 };
 
 export default function CampaignDetailPage() {
@@ -57,7 +62,7 @@ export default function CampaignDetailPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("cipd_user");
+    const storedUser = sessionStorage.getItem("cipd_user");
 
     if (!storedUser) {
       window.location.href = "/login";
@@ -75,7 +80,7 @@ export default function CampaignDetailPage() {
       queueMicrotask(() => setUser(parsedUser));
       loadPage(parsedUser.user_id);
     } catch {
-      localStorage.removeItem("cipd_user");
+      sessionStorage.removeItem("cipd_user");
       window.location.href = "/login";
     }
   }, [campaignId]);
@@ -83,6 +88,7 @@ export default function CampaignDetailPage() {
   async function loadPage(userId: number) {
     try {
       setLoading(true);
+      setError("");
 
       const campaignResponse = await authFetch(
         `http://127.0.0.1:8000/ambassador/campaigns/${campaignId}`
@@ -103,9 +109,11 @@ export default function CampaignDetailPage() {
 
       const submissionData = await submissionResponse.json();
 
-      if (submissionResponse.ok) {
-        setSubmission(submissionData.submission);
+      if (!submissionResponse.ok) {
+        setError(submissionData.detail || "Failed to load submission progress.");
+        return;
       }
+      setSubmission(submissionData.submission);
     } catch {
       setError(
         "Could not connect to the backend. Make sure FastAPI is running."
@@ -193,6 +201,7 @@ export default function CampaignDetailPage() {
   }
 
   const canSubmit = campaign.status === "ACTIVE";
+  const progress = submissionProgress(submission);
 
   return (
     <div className="mx-auto max-w-[1500px]">
@@ -215,7 +224,7 @@ export default function CampaignDetailPage() {
             {campaign.title}
           </h1>
 
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-gray-500">
+          <p className="mt-3 max-w-3xl whitespace-pre-line text-sm leading-6 text-gray-600">
             {campaign.description || "No campaign description provided."}
           </p>
         </div>
@@ -242,7 +251,7 @@ export default function CampaignDetailPage() {
 
             <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="rounded-xl bg-[#F8FAFA] p-4">
-                <p className="text-xs text-gray-400">Campaign dates</p>
+                <p className="text-xs text-gray-600">Campaign dates</p>
 
                 <p className="mt-1 text-sm font-semibold text-[#202629]">
                   {formatDate(campaign.start_date)} →{" "}
@@ -251,7 +260,7 @@ export default function CampaignDetailPage() {
               </div>
 
               <div className="rounded-xl bg-[#F8FAFA] p-4">
-                <p className="text-xs text-gray-400">Required hashtag</p>
+                <p className="text-xs text-gray-600">Required hashtag</p>
 
                 <p className="mt-1 text-sm font-semibold text-[#238C89]">
                   {campaign.mandatory_hashtag || "None"}
@@ -260,7 +269,7 @@ export default function CampaignDetailPage() {
             </div>
 
             <div className="mt-6 rounded-xl border border-gray-200 p-5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                 Official CiPD content
               </p>
 
@@ -279,11 +288,28 @@ export default function CampaignDetailPage() {
                   Open official content ↗
                 </a>
               ) : (
-                <p className="mt-4 text-sm text-gray-400">
+                <p className="mt-4 text-sm text-gray-600">
                   No official target URL has been added.
                 </p>
               )}
             </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
+            <h2 className="text-xl font-bold text-[#202629]">Before you submit</h2>
+            <ol className="mt-4 list-decimal space-y-3 pl-5 text-sm leading-6 text-gray-600">
+              <li>Read the campaign brief and official content. Use the approved message and resources when provided.</li>
+              <li>
+                Check <Link href="/ambassador/social-accounts" className="font-semibold text-[#238C89] underline">Social Accounts</Link>:
+                your chosen platform must be connected and verified in this prototype, and your profile must be ACTIVE.
+              </li>
+              <li>
+                Publish during the campaign dates shown above.
+                {campaign.mandatory_hashtag ? ` Include ${campaign.mandatory_hashtag} in your post.` : " No mandatory hashtag is specified."}
+              </li>
+              <li>Submit the direct Instagram or LinkedIn post URL, rather than your profile URL or this dashboard’s address. Select the matching platform.</li>
+              <li>Keep your post’s metrics available for admin review. After verification, the admin must calculate the campaign ratings.</li>
+            </ol>
           </div>
 
           <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
@@ -305,7 +331,7 @@ export default function CampaignDetailPage() {
             )}
 
             <div className="mt-6">
-              <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+              <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                 Platform
               </label>
 
@@ -325,7 +351,7 @@ export default function CampaignDetailPage() {
             </div>
 
             <div className="mt-5">
-              <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+              <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                 Social post URL
               </label>
 
@@ -333,7 +359,7 @@ export default function CampaignDetailPage() {
                 value={postUrl}
                 onChange={(e) => setPostUrl(e.target.value)}
                 disabled={!canSubmit}
-                placeholder="https://instagram.com/reel/..."
+                placeholder={platform === "LINKEDIN" ? "https://www.linkedin.com/posts/..." : "https://www.instagram.com/p/..."}
                 className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-[#54B9B4] disabled:bg-gray-100"
               />
             </div>
@@ -357,8 +383,35 @@ export default function CampaignDetailPage() {
         <div className="space-y-6">
           <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-[#9383D8]">
-              Submission status
+              Latest submission progress
             </p>
+
+            <p className="mt-4 font-semibold text-[#202629]">{progress.title}</p>
+            <p className="mt-2 text-sm leading-6 text-gray-600">{progress.detail}</p>
+            <ol aria-label="Submission stages" className="mt-4 space-y-2 text-sm text-gray-600">
+              {["Post submitted", "Metrics verified", "Campaign rated"].map((step, index) => (
+                <li key={step} className="flex items-center gap-2">
+                  <span aria-hidden="true" className={progress.stage > index ? "font-bold text-[#238C89]" : "text-gray-500"}>
+                    {progress.stage > index ? "✓" : "○"}
+                  </span>
+                  {step}{progress.stage > index ? " — complete" : " — pending"}
+                </li>
+              ))}
+            </ol>
+
+            {submission?.rating_calculated_at && (
+              <div className="mt-4 rounded-xl bg-[#F8FAFA] p-4 text-sm text-gray-600">
+                <p className="font-semibold text-[#202629]">
+                  Last stored campaign rating: {submission.rating_star_rating} stars
+                </p>
+                <p className="mt-1">Calculated {new Date(submission.rating_calculated_at).toLocaleString()}</p>
+                {progress.stage !== 3 && <p className="mt-1">This stored rating does not confirm that the latest submission is rated.</p>}
+              </div>
+            )}
+
+            <button type="button" onClick={() => user && loadPage(user.user_id)} className="mt-4 text-sm font-semibold text-[#238C89] underline">
+              Refresh progress
+            </button>
 
             {!submission ? (
               <div className="mt-5">
@@ -409,7 +462,7 @@ export default function CampaignDetailPage() {
                       key={String(label)}
                       className="rounded-xl bg-[#F8FAFA] p-4"
                     >
-                      <p className="text-xs text-gray-400">{label}</p>
+                      <p className="text-xs text-gray-600">{label}</p>
 
                       <p className="mt-1 font-bold text-[#202629]">
                         {Number(value).toLocaleString()}
@@ -421,7 +474,7 @@ export default function CampaignDetailPage() {
                 {!submission.fetched_at && (
                   <div className="mt-4 rounded-xl bg-[#FFF8E8] p-4">
                     <p className="text-sm text-[#9A6A00]">
-                      Metrics have not been collected for this post yet.
+                      An administrator has not saved metrics for this post yet.
                     </p>
                   </div>
                 )}
@@ -435,9 +488,10 @@ export default function CampaignDetailPage() {
             </p>
 
             <p className="mt-2 text-sm leading-6 text-gray-500">
-              A submitted post is stored immediately, but it only enters
-              normalization after verification and valid social engagement
-              metrics are collected.
+              Connecting a social account is a manual prototype step, not real
+              OAuth ownership verification. An ACTIVE ambassador’s post enters
+              scoring only after admin metric verification and an explicit
+              campaign rating calculation.
             </p>
           </div>
         </div>

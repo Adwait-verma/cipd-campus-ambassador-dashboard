@@ -143,7 +143,10 @@ export default function RegisterPage() {
           </div>
 
           <p className="text-xs text-gray-500">
-            Centre for Innovation, Policy and Digital Transformation
+            Centre for intelligent Product Development · IIIT-Delhi
+            <a href="https://cipd.iiitd.ac.in/" target="_blank" rel="noreferrer" className="mt-2 block text-[#54B9B4] underline">
+              Visit the official CiPD website ↗
+            </a>
           </p>
         </section>
 
@@ -178,7 +181,7 @@ export default function RegisterPage() {
               <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
 
                 <div className="md:col-span-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                     Full name
                   </label>
 
@@ -193,7 +196,7 @@ export default function RegisterPage() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                     College email
                   </label>
 
@@ -209,7 +212,7 @@ export default function RegisterPage() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                     College / University
                   </label>
 
@@ -224,7 +227,7 @@ export default function RegisterPage() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                     Graduation year
                   </label>
 
@@ -242,7 +245,7 @@ export default function RegisterPage() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                     Programme status
                   </label>
 
@@ -254,7 +257,7 @@ export default function RegisterPage() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                     Password
                   </label>
 
@@ -270,7 +273,7 @@ export default function RegisterPage() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                     Confirm password
                   </label>
 

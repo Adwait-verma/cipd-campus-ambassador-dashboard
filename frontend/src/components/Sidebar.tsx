@@ -36,8 +36,8 @@ export default function Sidebar() {
   const router = useRouter();
 
   function handleLogout() {
-    localStorage.removeItem("cipd_user");
-    localStorage.removeItem("cipd_token");
+    sessionStorage.removeItem("cipd_user");
+    sessionStorage.removeItem("cipd_token");
 
     router.replace("/login");
     router.refresh();

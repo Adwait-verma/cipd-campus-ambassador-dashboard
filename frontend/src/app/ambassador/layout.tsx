@@ -14,7 +14,7 @@ export default function AmbassadorLayout({
   const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("cipd_user");
+    const storedUser = sessionStorage.getItem("cipd_user");
 
     if (!storedUser) {
       router.replace("/login");
@@ -25,16 +25,16 @@ export default function AmbassadorLayout({
       const user = JSON.parse(storedUser);
 
       if (user.role !== "AMBASSADOR") {
-        localStorage.removeItem("cipd_user");
-        localStorage.removeItem("cipd_token");
+        sessionStorage.removeItem("cipd_user");
+        sessionStorage.removeItem("cipd_token");
         router.replace("/login");
         return;
       }
 
       queueMicrotask(() => setAuthorized(true));
     } catch {
-      localStorage.removeItem("cipd_user");
-      localStorage.removeItem("cipd_token");
+      sessionStorage.removeItem("cipd_user");
+      sessionStorage.removeItem("cipd_token");
       router.replace("/login");
     }
   }, [router]);

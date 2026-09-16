@@ -43,7 +43,7 @@ export default function AdminAmbassadorsPage() {
 
   useEffect(() => {
     async function loadAmbassadors() {
-      const storedUser = localStorage.getItem("cipd_user");
+      const storedUser = sessionStorage.getItem("cipd_user");
 
       if (!storedUser) {
         window.location.href = "/login";

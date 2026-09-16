@@ -69,7 +69,7 @@ export default function AdminCampaignDetailPage() {
   }
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("cipd_user");
+    const storedUser = sessionStorage.getItem("cipd_user");
 
     if (!storedUser) {
       window.location.href = "/login";
@@ -86,7 +86,7 @@ export default function AdminCampaignDetailPage() {
 
       queueMicrotask(() => loadCampaign());
     } catch {
-      localStorage.removeItem("cipd_user");
+      sessionStorage.removeItem("cipd_user");
       window.location.href = "/login";
     }
   }, [campaignId]);
@@ -255,7 +255,7 @@ export default function AdminCampaignDetailPage() {
                 Description
               </p>
 
-              <p className="mt-2 text-sm leading-6 text-gray-600">
+              <p className="mt-2 whitespace-pre-line text-sm leading-6 text-gray-600">
                 {campaign.description || "No description provided."}
               </p>
             </div>
@@ -305,7 +305,10 @@ export default function AdminCampaignDetailPage() {
           <p className="mt-3 text-sm leading-6 text-gray-500">
             This recalculates normalized scores, percentile ranks and star
             ratings for eligible ambassadors using their latest verified
-            campaign metrics.
+            campaign metrics. Saving verified metrics does not run this step
+            automatically. Recalculate after new submissions are verified or
+            existing metrics change; ambassadors can then refresh their campaign
+            page to see the updated status.
           </p>
 
           <button
