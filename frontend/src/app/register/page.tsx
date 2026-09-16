@@ -322,9 +322,9 @@ export default function RegisterPage() {
 
                   <p className="mt-2 text-sm leading-6 text-gray-500">
                     Your account has been saved successfully. Your ambassador
-                    profile is currently pending social verification. Check
-                    your email for the onboarding guide and WhatsApp group
-                    invite link.
+                    profile is currently pending social verification. At your
+                    first sign-in, we will send the onboarding guide by email,
+                    including the WhatsApp group invite if it is available.
                   </p>
                 </div>
               )}

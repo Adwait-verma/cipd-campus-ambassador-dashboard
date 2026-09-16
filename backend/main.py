@@ -26,6 +26,7 @@ from notifications import (
     email_enabled,
     email_ready,
     queue_campaign_notifications,
+    queue_broadcast,
     queue_welcome_email,
 )
 from scheduler import start_scheduler
@@ -206,6 +207,11 @@ class AdminSettingsRequest(BaseModel):
     whatsapp_group_invite_url: str
 
 
+class BroadcastRequest(BaseModel):
+    subject: str
+    message: str
+
+
 @app.get("/admin/settings")
 def get_admin_settings(current_user: dict = Depends(require_admin)):
     with engine.connect() as conn:
@@ -216,12 +222,30 @@ def get_admin_settings(current_user: dict = Depends(require_admin)):
     return {"whatsapp_group_invite_url": invite_url or ""}
 
 
+@app.get("/ambassador/whatsapp-group")
+def get_ambassador_whatsapp_group(
+    current_user: dict = Depends(require_ambassador),
+):
+    with engine.connect() as conn:
+        invite_url = conn.execute(text("""
+            SELECT whatsapp_group_invite_url FROM portal_settings
+            WHERE settings_id = 1
+        """)).scalar()
+    return {"whatsapp_group_invite_url": invite_url or None}
+
+
 @app.put("/admin/settings")
 def update_admin_settings(
     data: AdminSettingsRequest,
     current_user: dict = Depends(require_admin),
 ):
-    parsed = urlparse(data.whatsapp_group_invite_url.strip())
+    submitted_url = data.whatsapp_group_invite_url.strip()
+    if not submitted_url:
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM portal_settings WHERE settings_id = 1"))
+        return {"whatsapp_group_invite_url": ""}
+
+    parsed = urlparse(submitted_url)
     if (
         parsed.scheme != "https"
         or parsed.netloc.lower() != "chat.whatsapp.com"
@@ -266,6 +290,30 @@ def send_pending_notifications(current_user: dict = Depends(require_admin)):
     return deliver_pending(engine)
 
 
+@app.post("/admin/notifications/broadcast")
+def broadcast_to_ambassadors(
+    data: BroadcastRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_admin),
+):
+    subject = data.subject.strip()
+    message = data.message.strip()
+    if not subject or not message or len(subject) > 200 or len(message) > 5000:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter a subject (up to 200 characters) and message (up to 5000 characters).",
+        )
+    with engine.begin() as conn:
+        invite_url = conn.execute(text("""
+            SELECT whatsapp_group_invite_url FROM portal_settings
+            WHERE settings_id = 1
+        """)).scalar()
+        queued = queue_broadcast(conn, subject, message, invite_url)
+    if queued and email_ready():
+        background_tasks.add_task(deliver_pending, engine)
+    return {"queued": queued, "delivery_configured": email_ready()}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -286,7 +334,7 @@ def db_check():
 
 
 @app.post("/register")
-def register_ambassador(data: RegisterRequest, background_tasks: BackgroundTasks):
+def register_ambassador(data: RegisterRequest):
     try:
         if len(data.password) < 6:
             raise HTTPException(
@@ -306,16 +354,6 @@ def register_ambassador(data: RegisterRequest, background_tasks: BackgroundTasks
             raise HTTPException(status_code=400, detail="Mobile number is required.")
 
         with engine.begin() as conn:
-            invite_url = conn.execute(text("""
-                SELECT whatsapp_group_invite_url FROM portal_settings
-                WHERE settings_id = 1
-            """)).scalar()
-            if not invite_url:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Registration is not open yet. The admin must add the WhatsApp group invite link first.",
-                )
-
             existing_user = conn.execute(
                 text(
                     """
@@ -376,22 +414,11 @@ def register_ambassador(data: RegisterRequest, background_tasks: BackgroundTasks
             )
             ambassador_id = ambassador_result.scalar_one()
 
-            welcome_queued = queue_welcome_email(
-                conn,
-                user_id,
-                data.full_name.strip(),
-                invite_url,
-            )
-
-        if welcome_queued and email_ready():
-            background_tasks.add_task(deliver_pending, engine)
-
         return {
             "message": "Ambassador registered successfully.",
             "user_id": user_id,
             "ambassador_id": ambassador_id,
             "status": "PENDING",
-            "welcome_email_queued": welcome_queued,
         }
 
     except HTTPException:
@@ -403,7 +430,7 @@ def register_ambassador(data: RegisterRequest, background_tasks: BackgroundTasks
         )
 
 @app.post("/login")
-def login(data: LoginRequest):
+def login(data: LoginRequest, background_tasks: BackgroundTasks):
     try:
         with engine.connect() as conn:
             user = conn.execute(
@@ -441,6 +468,21 @@ def login(data: LoginRequest):
                 status_code=401,
                 detail="Invalid email or password.",
             )
+
+        if user_data["role"] == "AMBASSADOR":
+            with engine.begin() as conn:
+                invite_url = conn.execute(text("""
+                    SELECT whatsapp_group_invite_url FROM portal_settings
+                    WHERE settings_id = 1
+                """)).scalar()
+                welcome_queued = queue_welcome_email(
+                    conn,
+                    user_data["user_id"],
+                    user_data["full_name"],
+                    invite_url,
+                )
+            if welcome_queued and email_ready():
+                background_tasks.add_task(deliver_pending, engine)
 
         now = datetime.now(timezone.utc)
 

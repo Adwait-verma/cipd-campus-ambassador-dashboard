@@ -1,9 +1,13 @@
+"use client";
+
+import { authFetch } from "@/lib/api";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
 const steps = [
   {
     title: "Read your welcome email",
-    body: "Use the admin-provided invite link to join the official WhatsApp group, then keep your name, college, graduation year, email and WhatsApp mobile number up to date.",
+    body: "At first sign-in, check your email for onboarding steps. If the group invite is available, use it to join; otherwise check this page later. Keep your profile details up to date.",
     href: "/ambassador/profile",
     action: "Open profile",
   },
@@ -38,6 +42,18 @@ const steps = [
 ];
 
 export default function AmbassadorGuidePage() {
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    authFetch("http://127.0.0.1:8000/ambassador/whatsapp-group")
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = await response.json();
+        setInviteUrl(data.whatsapp_group_invite_url || null);
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <div className="mx-auto max-w-5xl">
       <section className="mb-8">
@@ -48,6 +64,17 @@ export default function AmbassadorGuidePage() {
         <p className="mt-3 max-w-3xl text-sm leading-6 text-gray-600">
           Follow these steps for every CiPD campaign. Verification and rating are separate so only reviewed campaign data enters the leaderboard.
         </p>
+      </section>
+
+      <section className="mb-6 rounded-2xl border border-[#BDE3E0] bg-[#EDF8F7] p-6">
+        <h2 className="font-bold text-[#202629]">Official WhatsApp group</h2>
+        {inviteUrl ? (
+          <a href={inviteUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block font-semibold text-[#238C89] underline">
+            Open group invite ↗
+          </a>
+        ) : (
+          <p className="mt-2 text-sm text-gray-600">The admin has not posted a group invite yet. You can continue with the other steps.</p>
+        )}
       </section>
 
       <section className="space-y-4">

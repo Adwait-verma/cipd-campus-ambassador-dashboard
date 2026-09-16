@@ -34,15 +34,19 @@ def email_ready() -> bool:
     )
 
 
-def queue_welcome_email(conn, user_id: int, full_name: str, invite_url: str) -> bool:
+def queue_welcome_email(conn, user_id: int, full_name: str, invite_url: str | None) -> bool:
     portal = os.getenv("PUBLIC_FRONTEND_URL", "http://localhost:3000").rstrip("/")
+    group_step = (
+        "2. Join the official ambassador WhatsApp group using this invite link: "
+        f"{invite_url}\n"
+        if invite_url else "2. Check the portal later for the optional WhatsApp group invite.\n"
+    )
     body = (
         f"Hello {full_name},\n\n"
         "Welcome to the CiPD Campus Ambassador Programme.\n\n"
         "Your next steps:\n"
         "1. Sign in and complete your profile.\n"
-        "2. Join the official ambassador WhatsApp group using this invite link: "
-        f"{invite_url}\n"
+        f"{group_step}"
         "3. Connect a supported social account. Your ambassador status becomes "
         "ACTIVE after at least one account is verified.\n"
         "4. Read each new campaign's official URL, dates, hashtag and guidelines.\n"
@@ -62,6 +66,34 @@ def queue_welcome_email(conn, user_id: int, full_name: str, invite_url: str) -> 
         "body": body,
     }).fetchone()
     return result is not None
+
+
+def queue_broadcast(conn, subject: str, message: str, invite_url: str | None) -> int:
+    broadcast_id = conn.execute(text("""
+        INSERT INTO email_broadcasts (subject, body)
+        VALUES (:subject, :body)
+        RETURNING broadcast_id
+    """), {"subject": subject, "body": message}).scalar_one()
+    recipients = conn.execute(text("""
+        SELECT user_id, full_name FROM users
+        WHERE role = 'AMBASSADOR' AND password_hash IS NOT NULL
+        ORDER BY user_id
+    """)).fetchall()
+    for recipient in recipients:
+        body = f"Hello {recipient.full_name},\n\n{message}\n\n"
+        if invite_url:
+            body += f"Official WhatsApp group invite: {invite_url}\n\n"
+        body += "This message was sent by a CiPD administrator."
+        conn.execute(text("""
+            INSERT INTO email_outbox (user_id, kind, broadcast_id, subject, body)
+            VALUES (:user_id, 'BROADCAST', :broadcast_id, :subject, :body)
+        """), {
+            "user_id": recipient.user_id,
+            "broadcast_id": broadcast_id,
+            "subject": subject,
+            "body": body,
+        })
+    return len(recipients)
 
 
 def queue_campaign_notifications(conn, campaign: dict) -> int:
