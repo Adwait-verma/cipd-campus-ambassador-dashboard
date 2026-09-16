@@ -5,15 +5,30 @@ Run:
     uvicorn main:app --reload
 """
 import os
+import re
+import csv
+import io
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import jwt
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr
 from pwdlib import PasswordHash
 from sqlalchemy import create_engine, text
+
+from notifications import (
+    deliver_pending,
+    email_enabled,
+    email_ready,
+    queue_campaign_notifications,
+    queue_welcome_email,
+)
+from scheduler import start_scheduler
 
 load_dotenv()
 
@@ -32,7 +47,16 @@ if not DATABASE_URL:
 engine = create_engine(DATABASE_URL)
 password_hash = PasswordHash.recommended()
 
-app = FastAPI(title="CiPD Ambassador Rating System")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    scheduler = start_scheduler(engine)
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title="CiPD Ambassador Rating System", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -131,6 +155,25 @@ class ProfileUpdateRequest(BaseModel):
     email: EmailStr
     college_name: str
     graduation_year: int
+    phone_number: str | None = None
+
+def normalize_phone_number(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    phone = re.sub(r"[\s()-]", "", value)
+    if re.fullmatch(r"[6-9]\d{9}", phone):
+        phone = "+91" + phone
+    if not re.fullmatch(r"\+[1-9]\d{7,14}", phone):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Enter a valid mobile number with country code "
+                "(for example, +91 followed by 10 digits)."
+            ),
+        )
+    return phone
+
+
 class CampaignCreateRequest(BaseModel):
     title: str
     description: str | None = None
@@ -145,6 +188,7 @@ class RegisterRequest(BaseModel):
     college_name: str
     graduation_year: int
     password: str
+    phone_number: str
 
 
 class LoginRequest(BaseModel):
@@ -157,6 +201,69 @@ class MetricVerificationRequest(BaseModel):
     shares_count: int = 0
     saves_count: int = 0
     views_impressions: int = 0
+
+class AdminSettingsRequest(BaseModel):
+    whatsapp_group_invite_url: str
+
+
+@app.get("/admin/settings")
+def get_admin_settings(current_user: dict = Depends(require_admin)):
+    with engine.connect() as conn:
+        invite_url = conn.execute(text("""
+            SELECT whatsapp_group_invite_url FROM portal_settings
+            WHERE settings_id = 1
+        """)).scalar()
+    return {"whatsapp_group_invite_url": invite_url or ""}
+
+
+@app.put("/admin/settings")
+def update_admin_settings(
+    data: AdminSettingsRequest,
+    current_user: dict = Depends(require_admin),
+):
+    parsed = urlparse(data.whatsapp_group_invite_url.strip())
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc.lower() != "chat.whatsapp.com"
+        or not re.fullmatch(r"/[A-Za-z0-9]+/?", parsed.path)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Enter a valid https://chat.whatsapp.com/ invite link.",
+        )
+    invite_url = f"https://chat.whatsapp.com/{parsed.path.strip('/')}"
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO portal_settings (settings_id, whatsapp_group_invite_url)
+            VALUES (1, :url)
+            ON CONFLICT (settings_id) DO UPDATE
+            SET whatsapp_group_invite_url = EXCLUDED.whatsapp_group_invite_url
+        """), {"url": invite_url})
+    return {"whatsapp_group_invite_url": invite_url}
+
+
+@app.get("/admin/notifications/status")
+def get_notification_status(current_user: dict = Depends(require_admin)):
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT kind, status, COUNT(*)::INT AS count
+            FROM email_outbox GROUP BY kind, status
+        """)).fetchall()
+    return {
+        "delivery_enabled": email_enabled(),
+        "smtp_configured": email_ready(),
+        "counts": [dict(row._mapping) for row in rows],
+    }
+
+
+@app.post("/admin/notifications/send-pending")
+def send_pending_notifications(current_user: dict = Depends(require_admin)):
+    if not email_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="Email delivery is not configured.",
+        )
+    return deliver_pending(engine)
 
 
 @app.get("/health")
@@ -179,7 +286,7 @@ def db_check():
 
 
 @app.post("/register")
-def register_ambassador(data: RegisterRequest):
+def register_ambassador(data: RegisterRequest, background_tasks: BackgroundTasks):
     try:
         if len(data.password) < 6:
             raise HTTPException(
@@ -194,8 +301,21 @@ def register_ambassador(data: RegisterRequest):
             raise HTTPException(status_code=400, detail="College name is required.")
 
         hashed_password = password_hash.hash(data.password)
+        phone_number = normalize_phone_number(data.phone_number)
+        if not phone_number:
+            raise HTTPException(status_code=400, detail="Mobile number is required.")
 
         with engine.begin() as conn:
+            invite_url = conn.execute(text("""
+                SELECT whatsapp_group_invite_url FROM portal_settings
+                WHERE settings_id = 1
+            """)).scalar()
+            if not invite_url:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Registration is not open yet. The admin must add the WhatsApp group invite link first.",
+                )
+
             existing_user = conn.execute(
                 text(
                     """
@@ -216,8 +336,8 @@ def register_ambassador(data: RegisterRequest):
             user_result = conn.execute(
                 text(
                     """
-                    INSERT INTO users (full_name, email, role, password_hash)
-                    VALUES (:full_name, :email, 'AMBASSADOR', :password_hash)
+                    INSERT INTO users (full_name, email, role, password_hash, phone_number)
+                    VALUES (:full_name, :email, 'AMBASSADOR', :password_hash, :phone_number)
                     RETURNING user_id
                     """
                 ),
@@ -225,6 +345,7 @@ def register_ambassador(data: RegisterRequest):
                     "full_name": data.full_name.strip(),
                     "email": str(data.email).lower(),
                     "password_hash": hashed_password,
+                    "phone_number": phone_number,
                 },
             )
             user_id = user_result.scalar_one()
@@ -255,11 +376,22 @@ def register_ambassador(data: RegisterRequest):
             )
             ambassador_id = ambassador_result.scalar_one()
 
+            welcome_queued = queue_welcome_email(
+                conn,
+                user_id,
+                data.full_name.strip(),
+                invite_url,
+            )
+
+        if welcome_queued and email_ready():
+            background_tasks.add_task(deliver_pending, engine)
+
         return {
             "message": "Ambassador registered successfully.",
             "user_id": user_id,
             "ambassador_id": ambassador_id,
             "status": "PENDING",
+            "welcome_email_queued": welcome_queued,
         }
 
     except HTTPException:
@@ -357,6 +489,7 @@ def update_ambassador_profile(
     try:
         full_name = data.full_name.strip()
         college_name = data.college_name.strip()
+        phone_number = normalize_phone_number(data.phone_number)
 
         if not full_name:
             raise HTTPException(
@@ -419,12 +552,14 @@ def update_ambassador_profile(
                     UPDATE users
                     SET
                         full_name = :full_name,
-                        email = :email
+                        email = :email,
+                        phone_number = :phone_number
                     WHERE user_id = :user_id
                 """),
                 {
                     "full_name": full_name,
                     "email": str(data.email),
+                    "phone_number": phone_number,
                     "user_id": user_id,
                 },
             )
@@ -451,6 +586,7 @@ def update_ambassador_profile(
                         a.ambassador_id,
                         u.full_name,
                         u.email,
+                        u.phone_number,
                         a.college_name,
                         a.graduation_year,
                         a.status
@@ -493,6 +629,7 @@ def get_ambassador_profile(
                         u.user_id,
                         u.full_name,
                         u.email,
+                        u.phone_number,
                         u.role,
                         a.ambassador_id,
                         a.college_name,
@@ -838,6 +975,7 @@ def get_ambassador_dashboard_data(
                         a.status,
                         u.full_name,
                         u.email,
+                        u.phone_number,
                         a.college_name,
                         a.graduation_year
                     FROM ambassadors a
@@ -1597,6 +1735,61 @@ def submit_campaign_post(
             status_code=500,
             detail=f"Failed to submit campaign post: {e}",
         )
+@app.get("/admin/ambassadors/export.csv")
+def export_admin_ambassadors_csv(
+    current_user: dict = Depends(require_admin),
+):
+    def csv_safe(value) -> str:
+        rendered = "" if value is None else str(value)
+        return f"'{rendered}" if rendered.startswith(("=", "+", "-", "@")) else rendered
+
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            WITH social_summary AS (
+                SELECT ambassador_id,
+                    STRING_AGG(
+                        platform || ': @' || profile_handle ||
+                        CASE WHEN verified THEN ' (verified)' ELSE ' (pending)' END,
+                        '; ' ORDER BY platform
+                    ) AS social_accounts
+                FROM social_accounts
+                GROUP BY ambassador_id
+            )
+            SELECT u.full_name, u.email, u.phone_number,
+                a.college_name, a.graduation_year, a.status,
+                COALESCE(s.social_accounts, '') AS social_accounts,
+                u.created_at
+            FROM ambassadors a
+            JOIN users u ON u.user_id = a.user_id
+            LEFT JOIN social_summary s ON s.ambassador_id = a.ambassador_id
+            ORDER BY u.full_name, u.user_id
+        """)).fetchall()
+
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow([
+        "Full Name", "Email", "Mobile Number", "College / University",
+        "Graduation Year", "Status", "Social Accounts", "Registered At",
+    ])
+    for row in rows:
+        item = row._mapping
+        writer.writerow([
+            csv_safe(item["full_name"]), csv_safe(item["email"]),
+            csv_safe(item["phone_number"]), csv_safe(item["college_name"]),
+            item["graduation_year"], item["status"],
+            csv_safe(item["social_accounts"]), item["created_at"].isoformat(),
+        ])
+    return Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="cipd-ambassadors-{date.today().isoformat()}.csv"'
+            )
+        },
+    )
+
+
 @app.get("/admin/ambassadors")
 def get_admin_ambassadors(
     current_user: dict = Depends(require_admin),
@@ -1662,6 +1855,7 @@ def get_admin_ambassadors(
                         u.user_id,
                         u.full_name,
                         u.email,
+                        u.phone_number,
                         a.college_name,
                         a.graduation_year,
                         a.status,
@@ -1728,6 +1922,7 @@ def get_admin_ambassador_detail(
                         u.user_id,
                         u.full_name,
                         u.email,
+                        u.phone_number,
                         a.college_name,
                         a.graduation_year,
                         a.status
@@ -2600,6 +2795,7 @@ def get_admin_campaigns(
 @app.post("/admin/campaigns")
 def create_admin_campaign(
     data: CampaignCreateRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin),
 ):
     try:
@@ -2671,9 +2867,18 @@ def create_admin_campaign(
                 },
             ).fetchone()
 
+            queued_emails = queue_campaign_notifications(
+                conn,
+                dict(campaign._mapping),
+            )
+
+        if email_ready() and queued_emails:
+            background_tasks.add_task(deliver_pending, engine)
+
         return {
             "message": "Campaign created successfully.",
             "campaign": dict(campaign._mapping),
+            "emails_queued": queued_emails,
         }
 
     except HTTPException:
@@ -2938,6 +3143,20 @@ def get_admin_overview(
                 """)
             ).scalar() or 0
 
+            notification_stats = conn.execute(
+                text("""
+                    SELECT
+                        COUNT(*) FILTER (
+                            WHERE status = 'FAILED'
+                        )::INT AS failed_emails,
+                        COUNT(*) FILTER (
+                            WHERE kind = 'MONTHLY_REPORT'
+                              AND status = 'SENT'
+                        )::INT AS reports_sent
+                    FROM email_outbox
+                """)
+            ).fetchone()._mapping
+
             # -------------------------------------------------
             # Recent verified reach activity
             # Latest snapshot per post only
@@ -3110,6 +3329,15 @@ def get_admin_overview(
 
                 "campaigns_ending_soon":
                     int(ending_soon),
+
+                "pending_verification":
+                    unverified_posts,
+
+                "failed_emails":
+                    int(notification_stats["failed_emails"] or 0),
+
+                "reports_sent":
+                    int(notification_stats["reports_sent"] or 0),
             },
 
             "reach_trend":

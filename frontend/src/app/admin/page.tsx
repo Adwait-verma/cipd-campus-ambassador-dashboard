@@ -15,6 +15,9 @@ type OverviewData = {
     total_engagements: number;
     engagement_rate: number;
     campaigns_ending_soon: number;
+    pending_verification: number;
+    failed_emails: number;
+    reports_sent: number;
   };
 
   reach_trend: {
@@ -238,8 +241,8 @@ export default function AdminOverviewPage() {
 
   const attentionItems = [
     {
-      value: metrics.unverified_posts,
-      label: "Unverified campaign posts",
+      value: metrics.pending_verification,
+      label: "Posts pending metric verification",
     },
 
     {
@@ -251,6 +254,19 @@ export default function AdminOverviewPage() {
     {
       value: metrics.campaigns_ending_soon,
       label: "Campaigns closing within 7 days",
+    },
+  ];
+
+  const deliveryItems = [
+    {
+      label: "Failed emails",
+      value: metrics.failed_emails,
+      note: "Needs SMTP or recipient review",
+    },
+    {
+      label: "Monthly reports sent",
+      value: metrics.reports_sent,
+      note: "Successfully delivered reports",
     },
   ];
 
@@ -318,6 +334,25 @@ export default function AdminOverviewPage() {
 
             <p className="mt-2 text-xs font-medium text-gray-400">
               {metric.change}
+            </p>
+          </div>
+        ))}
+      </section>
+
+      <section className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2">
+        {deliveryItems.map((item) => (
+          <div
+            key={item.label}
+            className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm"
+          >
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+              {item.label}
+            </p>
+            <p className="mt-3 text-3xl font-bold text-[#202629]">
+              {formatNumber(item.value)}
+            </p>
+            <p className="mt-2 text-xs font-medium text-gray-500">
+              {item.note}
             </p>
           </div>
         ))}

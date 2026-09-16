@@ -7,6 +7,7 @@ CREATE TABLE users (
     email VARCHAR(150) UNIQUE NOT NULL,
     role VARCHAR(20) CHECK (role IN ('ADMIN', 'AMBASSADOR')),
     password_hash TEXT,
+    phone_number VARCHAR(16),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -91,6 +92,30 @@ CREATE TABLE ambassador_ratings (
     star_rating INT CHECK (star_rating IN (3, 4, 5)),
     calculated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE portal_settings (
+    settings_id INT PRIMARY KEY CHECK (settings_id = 1),
+    whatsapp_group_invite_url TEXT NOT NULL
+);
+
+CREATE TABLE email_outbox (
+    message_id BIGSERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    kind VARCHAR(30) NOT NULL CHECK (kind IN ('WELCOME', 'CAMPAIGN', 'MONTHLY_REPORT')),
+    campaign_id INT REFERENCES campaigns(campaign_id) ON DELETE CASCADE,
+    report_month DATE,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED')),
+    attempts INT NOT NULL DEFAULT 0,
+    last_attempt_at TIMESTAMP WITH TIME ZONE,
+    last_error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE UNIQUE INDEX email_outbox_once_per_user_event
+ON email_outbox (user_id, kind, COALESCE(campaign_id, -1), COALESCE(report_month, DATE '0001-01-01'));
 
 -- Quick sanity-check seed data so you can verify the connection tonight
 INSERT INTO users (full_name, email, role) VALUES

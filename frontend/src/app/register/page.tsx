@@ -7,6 +7,7 @@ export default function RegisterPage() {
   const [form, setForm] = useState({
     fullName: "",
     email: "",
+    phoneNumber: "",
     college: "",
     graduationYear: "",
     password: "",
@@ -35,6 +36,7 @@ export default function RegisterPage() {
     if (
       !form.fullName.trim() ||
       !form.email.trim() ||
+      !form.phoneNumber.trim() ||
       !form.college.trim() ||
       !form.graduationYear.trim() ||
       !form.password ||
@@ -63,6 +65,7 @@ export default function RegisterPage() {
         body: JSON.stringify({
           full_name: form.fullName,
           email: form.email,
+          phone_number: form.phoneNumber.trim(),
           college_name: form.college,
           graduation_year: Number(form.graduationYear),
           password: form.password,
@@ -81,6 +84,7 @@ export default function RegisterPage() {
       setForm({
         fullName: "",
         email: "",
+        phoneNumber: "",
         college: "",
         graduationYear: "",
         password: "",
@@ -213,6 +217,21 @@ export default function RegisterPage() {
 
                 <div>
                   <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
+                    Mobile number (WhatsApp)
+                  </label>
+                  <input
+                    type="tel"
+                    autoComplete="tel"
+                    value={form.phoneNumber}
+                    onChange={(e) => updateField("phoneNumber", e.target.value)}
+                    placeholder="+91 9876543210"
+                    className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none transition focus:border-[#54B9B4]"
+                  />
+                  <p className="mt-1 text-xs text-gray-600">Used by CiPD administrators to contact you about campaigns.</p>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
                     College / University
                   </label>
 
@@ -303,7 +322,9 @@ export default function RegisterPage() {
 
                   <p className="mt-2 text-sm leading-6 text-gray-500">
                     Your account has been saved successfully. Your ambassador
-                    profile is currently pending social verification.
+                    profile is currently pending social verification. Check
+                    your email for the onboarding guide and WhatsApp group
+                    invite link.
                   </p>
                 </div>
               )}

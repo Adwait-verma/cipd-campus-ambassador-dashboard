@@ -2,12 +2,12 @@
 
 ## Project purpose
 
-This repository contains a demo dashboard for managing CiPD campus ambassador campaigns. Ambassadors register, connect a social profile, join campaigns, submit campaign posts, and track ratings and awards. Administrators create campaigns, verify reported metrics, and review rankings and analytics.
+This repository contains a demo dashboard for managing CiPD campus ambassador campaigns. Ambassadors register with email and mobile contact details, connect a social profile, join campaigns, submit campaign posts, and track ratings and awards. Administrators configure the programme WhatsApp group link, create campaigns, contact ambassadors, export the ambassador directory, verify reported metrics, and review rankings and analytics.
 
 ## Technology and project structure
 
 - `frontend/` — Next.js 16 and React 19 application. Route groups under `src/app/admin/` and `src/app/ambassador/` provide role-specific dashboards; shared authenticated requests use `src/lib/api.ts`.
-- `backend/` — FastAPI application and SQLAlchemy queries in `main.py`, dependencies in `requirements.txt`, database bootstrap in `schema.sql`, and an interactive admin-password utility in `set_admin_password.py`.
+- `backend/` — FastAPI application and SQLAlchemy queries in `main.py`, email outbox/scheduling in `notifications.py` and `scheduler.py`, dependencies in `requirements.txt`, database bootstrap in `schema.sql`, additive upgrades in `migrations/`, and an interactive admin-password utility in `set_admin_password.py`.
 - PostgreSQL — stores users, ambassador profiles, social accounts, campaigns, post submissions, metric snapshots, ratings, and awards.
 
 ## Application workflow
@@ -17,6 +17,8 @@ Registration creates a user and an ambassador profile. Login verifies the Argon2
 New ambassadors begin as `PENDING`. They become `ACTIVE` after at least one social account is marked verified, and return to `PENDING` if their last verified account is disconnected. Only active ambassadors participate in scoring, ranking, and awards.
 
 Administrators create campaigns with platform, schedule, and content requirements. An eligible ambassador can submit a campaign-post URL for a connected, verified platform. The post remains pending until an administrator records and verifies reach, likes, comments, shares, saves, and views. The application then normalizes reach and engagement within each platform, weights them 30% and 70%, averages multiple post scores, assigns campaign rank and percentile, and awards three to five stars from that percentile. Stored ratings power awards, leaderboards, and analytics; analytics uses the latest metric snapshot for each post. Ambassadors can also maintain their own profile details.
+
+Registration queues a one-time welcome email with onboarding steps and the admin-configured WhatsApp group invite link. Campaign creation queues exactly one email per registered ambassador for that newly listed campaign, containing its official URL and guidelines. A background worker sends queued mail when SMTP delivery is enabled. On the first day of each month, it queues each ambassador's previous-month verified metrics and a top-10 benchmark based on the existing normalized leaderboard, including platform-level metrics. Unique database keys prevent duplicate welcome, campaign, or monthly emails.
 
 ## Windows setup
 
@@ -47,6 +49,14 @@ python -c "import secrets; print(secrets.token_urlsafe(64))"
 
 If PowerShell blocks activation, first run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`. Edit the new local `.env` to configure `DATABASE_URL` for the database above and set `JWT_SECRET` to the generated value. Never commit `.env` or reuse a demo secret in production.
 
+Email delivery is disabled by default. To enable it, set `EMAIL_DELIVERY_ENABLED=true` and configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and, when required, `SMTP_USERNAME` and `SMTP_PASSWORD`. Keep those values only in `.env`. `PUBLIC_FRONTEND_URL` controls links included in campaign emails.
+
+For an existing database created before contact details and notifications were added, apply the additive migration once:
+
+```powershell
+psql -U postgres -d cipd_ambassadors -f migrations\20260916_contacts_notifications.sql
+```
+
 To assign a password to an existing administrator, run:
 
 ```powershell
@@ -75,6 +85,8 @@ npm run dev
 
 Open `http://localhost:3000`. For a production-mode local check, run `npm run build` followed by `npm run start`.
 
+Before accepting ambassador registrations, sign in as an administrator, open **Settings**, and save the official `https://chat.whatsapp.com/...` group invite link. Registration remains closed until this link is configured so no ambassador receives an incomplete welcome email.
+
 ## Useful validation commands
 
 ```powershell
@@ -90,6 +102,8 @@ npm run build
 
 - Social account linking is a manual prototype and does not perform real OAuth authorization.
 - Social metrics are entered and verified manually by an administrator; no platform metrics API is connected.
+- The admin supplies the official group invite URL under **Settings**. A new ambassador receives the URL by email and chooses to join; the portal cannot silently add the person to a group. The separate WhatsApp action opens a direct chat with a prefilled greeting, and the admin must press Send.
+- Campaign and monthly emails are real SMTP-backed jobs only after valid SMTP settings are supplied. Failed deliveries are retained for review and limited retries; no credentials are included in the repository.
 - The frontend API URL and backend CORS origins target local development (`localhost`/`127.0.0.1`). Configure both explicitly before deployment.
 - The JWT and user profile are stored in browser `sessionStorage`, separately for each tab/window. You can sign in as admin in one window and ambassador in another; refreshing preserves each login, and logging out affects only that window. A fresh window requires sign-in, and token expiry still applies. After upgrading from the old shared storage, sign in again once in each window. This storage is still accessible to JavaScript; a production deployment should use a hardened session strategy, such as secure, HTTP-only cookies with appropriate CSRF protection.
 - Social access tokens must remain server-side and must never be returned to the frontend, logged, or committed.

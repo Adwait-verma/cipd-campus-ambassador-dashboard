@@ -11,6 +11,7 @@ type Ambassador = {
   user_id: number;
   full_name: string;
   email: string;
+  phone_number: string | null;
   college_name: string;
   graduation_year: number;
   status: AmbassadorStatus;
@@ -310,6 +311,16 @@ const response = await authFetch(
             <p className="mt-1 text-sm text-gray-600">
               {ambassador.email}
             </p>
+            {ambassador.phone_number && (
+              <a
+                href={`https://wa.me/${ambassador.phone_number.replace(/\D/g, "")}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-block text-sm font-semibold text-[#238C89] underline"
+              >
+                {ambassador.phone_number} · Open WhatsApp
+              </a>
+            )}
           </div>
         </div>
 
@@ -413,6 +424,7 @@ const response = await authFetch(
             {[
               ["Full name", ambassador.full_name],
               ["Email", ambassador.email],
+              ["Mobile", ambassador.phone_number || "Not provided"],
               ["College", ambassador.college_name],
               [
                 "Graduation year",

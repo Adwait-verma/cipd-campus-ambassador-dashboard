@@ -29,6 +29,11 @@ const navigation = [
     href: "/admin/analytics",
     icon: "↗",
   },
+  {
+    name: "Settings",
+    href: "/admin/settings",
+    icon: "⚙",
+  },
 ];
 
 export default function AdminSidebar() {

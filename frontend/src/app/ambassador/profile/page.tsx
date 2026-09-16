@@ -15,6 +15,7 @@ type Profile = {
   ambassador_id: number;
   full_name: string;
   email: string;
+  phone_number: string | null;
   college_name: string;
   graduation_year: number;
   status: string;
@@ -26,6 +27,7 @@ export default function ProfilePage() {
   const [form, setForm] = useState({
     fullName: "",
     email: "",
+    phoneNumber: "",
     college: "",
     graduationYear: "",
   });
@@ -72,6 +74,7 @@ export default function ProfilePage() {
         setForm({
           fullName: loadedProfile.full_name,
           email: loadedProfile.email,
+          phoneNumber: loadedProfile.phone_number ?? "",
           college: loadedProfile.college_name,
           graduationYear:
             loadedProfile.graduation_year.toString(),
@@ -145,6 +148,7 @@ export default function ProfilePage() {
           body: JSON.stringify({
             full_name: form.fullName.trim(),
             email: form.email.trim(),
+            phone_number: form.phoneNumber.trim() || null,
             college_name: form.college.trim(),
             graduation_year: graduationYear,
           }),
@@ -166,6 +170,7 @@ export default function ProfilePage() {
       setForm({
         fullName: updatedProfile.full_name,
         email: updatedProfile.email,
+        phoneNumber: updatedProfile.phone_number ?? "",
         college: updatedProfile.college_name,
         graduationYear:
           updatedProfile.graduation_year.toString(),
@@ -384,6 +389,21 @@ export default function ProfilePage() {
                 }
                 className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#54B9B4]"
               />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider text-gray-600">
+                Mobile number (WhatsApp)
+              </label>
+              <input
+                type="tel"
+                autoComplete="tel"
+                value={form.phoneNumber}
+                onChange={(e) => updateField("phoneNumber", e.target.value)}
+                placeholder="+91 9876543210"
+                className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#54B9B4]"
+              />
+              <p className="mt-1 text-xs text-gray-600">Only you and CiPD administrators can view this number.</p>
             </div>
 
             <div>

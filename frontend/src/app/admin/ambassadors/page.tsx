@@ -10,6 +10,7 @@ type Ambassador = {
   user_id: number;
   full_name: string;
   email: string;
+  phone_number: string | null;
   college_name: string;
   graduation_year: number;
   status: AmbassadorStatus;
@@ -40,6 +41,7 @@ export default function AdminAmbassadorsPage() {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [exportError, setExportError] = useState("");
 
   useEffect(() => {
     async function loadAmbassadors() {
@@ -88,7 +90,8 @@ export default function AdminAmbassadorsPage() {
       const matchesSearch =
         ambassador.full_name.toLowerCase().includes(searchValue) ||
         ambassador.college_name.toLowerCase().includes(searchValue) ||
-        ambassador.email.toLowerCase().includes(searchValue);
+        ambassador.email.toLowerCase().includes(searchValue) ||
+        (ambassador.phone_number || "").includes(searchValue);
 
       const matchesStatus =
         statusFilter === "ALL" ||
@@ -116,6 +119,34 @@ export default function AdminAmbassadorsPage() {
     }
 
     return reach.toLocaleString();
+  }
+
+  async function exportAmbassadors() {
+    setExportError("");
+    try {
+      const response = await authFetch(
+        "http://127.0.0.1:8000/admin/ambassadors/export.csv"
+      );
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || "Could not export ambassadors.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `cipd-ambassadors-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (exportError) {
+      setExportError(
+        exportError instanceof Error
+          ? exportError.message
+          : "Could not export ambassadors."
+      );
+    }
   }
 
   if (loading) {
@@ -161,7 +192,20 @@ export default function AdminAmbassadorsPage() {
             campaign reach, ratings and verification status.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={exportAmbassadors}
+          className="w-fit rounded-xl bg-[#202629] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#343B3E]"
+        >
+          Export CSV
+        </button>
       </section>
+
+      {exportError && (
+        <p className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
+          {exportError}
+        </p>
+      )}
 
       {/* Real summary cards */}
       <section className="mb-6 grid grid-cols-1 gap-5 md:grid-cols-3">
@@ -243,7 +287,7 @@ export default function AdminAmbassadorsPage() {
       {/* Real table */}
       <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1050px]">
+          <table className="w-full min-w-[1200px]">
             <thead>
               <tr className="border-b border-gray-100 bg-[#F8FAFA] text-left">
                 {[
@@ -254,7 +298,7 @@ export default function AdminAmbassadorsPage() {
                   "Score",
                   "Rating",
                   "Status",
-                  "",
+                  "Actions",
                 ].map((heading) => (
                   <th
                     key={heading}
@@ -353,13 +397,25 @@ export default function AdminAmbassadorsPage() {
                     </span>
                   </td>
 
-                  <td className="px-6 py-5 text-right">
-                    <Link
-                      href={`/admin/ambassadors/${ambassador.ambassador_id}`}
-                      className="text-sm font-semibold text-[#9383D8]"
-                    >
-                      View →
-                    </Link>
+                  <td className="px-6 py-5">
+                    <div className="flex items-center justify-end gap-3">
+                      {ambassador.phone_number && (
+                        <a
+                          href={`https://wa.me/${ambassador.phone_number.replace(/\D/g, "")}?text=${encodeURIComponent(`Hello ${ambassador.full_name}, this is the CiPD Campus Ambassador Programme.`)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="whitespace-nowrap text-sm font-semibold text-[#238C89]"
+                        >
+                          Open WhatsApp
+                        </a>
+                      )}
+                      <Link
+                        href={`/admin/ambassadors/${ambassador.ambassador_id}`}
+                        className="whitespace-nowrap text-sm font-semibold text-[#9383D8]"
+                      >
+                        View →
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}
