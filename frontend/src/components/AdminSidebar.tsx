@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import BrandLogo from "./BrandLogo";
 
 const navigation = [
   {
@@ -51,9 +52,7 @@ export default function AdminSidebar() {
   return (
     <aside className="fixed left-0 top-0 flex h-screen w-64 flex-col bg-[#202629] text-white">
       <div className="border-b border-white/10 px-6 py-7">
-        <div className="text-2xl font-bold tracking-tight">
-          C<span className="text-[#54B9B4]">i</span>PD
-        </div>
+        <BrandLogo className="w-32" />
 
         <p className="mt-2 text-xs font-semibold tracking-[0.18em] text-[#9383D8]">
           ADMIN

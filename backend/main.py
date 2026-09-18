@@ -22,9 +22,11 @@ from pwdlib import PasswordHash
 from sqlalchemy import create_engine, text
 
 from notifications import (
+    automatic_email_cutoff,
     deliver_pending,
     email_enabled,
     email_ready,
+    missing_email_settings,
     queue_campaign_notifications,
     queue_broadcast,
     queue_welcome_email,
@@ -207,9 +209,48 @@ class AdminSettingsRequest(BaseModel):
     whatsapp_group_invite_url: str
 
 
+class AdminContactRequest(BaseModel):
+    contact_email: EmailStr | None = None
+    phone_number: str | None = None
+
+
 class BroadcastRequest(BaseModel):
     subject: str
     message: str
+
+
+@app.get("/admin/contact")
+def get_admin_contact(current_user: dict = Depends(require_admin)):
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT email, contact_email, phone_number
+            FROM users WHERE user_id = :user_id AND role = 'ADMIN'
+        """), {"user_id": current_user["user_id"]}).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Admin account not found.")
+    return dict(row._mapping)
+
+
+@app.put("/admin/contact")
+def update_admin_contact(
+    data: AdminContactRequest,
+    current_user: dict = Depends(require_admin),
+):
+    phone_number = normalize_phone_number(data.phone_number)
+    with engine.begin() as conn:
+        row = conn.execute(text("""
+            UPDATE users
+            SET contact_email = :contact_email, phone_number = :phone_number
+            WHERE user_id = :user_id AND role = 'ADMIN'
+            RETURNING email, contact_email, phone_number
+        """), {
+            "contact_email": str(data.contact_email) if data.contact_email else None,
+            "phone_number": phone_number,
+            "user_id": current_user["user_id"],
+        }).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Admin account not found.")
+    return dict(row._mapping)
 
 
 @app.get("/admin/settings")
@@ -268,14 +309,24 @@ def update_admin_settings(
 
 @app.get("/admin/notifications/status")
 def get_notification_status(current_user: dict = Depends(require_admin)):
+    cutoff = automatic_email_cutoff()
     with engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT kind, status, COUNT(*)::INT AS count
             FROM email_outbox GROUP BY kind, status
         """)).fetchall()
+        older_queued = conn.execute(text("""
+            SELECT COUNT(*)::INT FROM email_outbox
+            WHERE :cutoff IS NOT NULL
+              AND created_at < CAST(:cutoff AS TIMESTAMPTZ)
+              AND status IN ('PENDING', 'FAILED', 'SENDING')
+        """), {"cutoff": cutoff}).scalar_one()
     return {
         "delivery_enabled": email_enabled(),
-        "smtp_configured": email_ready(),
+        "smtp_configured": not missing_email_settings(),
+        "delivery_ready": email_ready(),
+        "missing_settings": missing_email_settings(),
+        "older_queued": older_queued,
         "counts": [dict(row._mapping) for row in rows],
     }
 
@@ -287,7 +338,7 @@ def send_pending_notifications(current_user: dict = Depends(require_admin)):
             status_code=503,
             detail="Email delivery is not configured.",
         )
-    return deliver_pending(engine)
+    return deliver_pending(engine, include_older=True)
 
 
 @app.post("/admin/notifications/broadcast")
@@ -334,7 +385,7 @@ def db_check():
 
 
 @app.post("/register")
-def register_ambassador(data: RegisterRequest):
+def register_ambassador(data: RegisterRequest, background_tasks: BackgroundTasks):
     try:
         if len(data.password) < 6:
             raise HTTPException(
@@ -414,11 +465,23 @@ def register_ambassador(data: RegisterRequest):
             )
             ambassador_id = ambassador_result.scalar_one()
 
+            invite_url = conn.execute(text("""
+                SELECT whatsapp_group_invite_url FROM portal_settings
+                WHERE settings_id = 1
+            """)).scalar()
+            welcome_queued = queue_welcome_email(
+                conn, user_id, data.full_name.strip(), invite_url
+            )
+
+        if welcome_queued and email_ready():
+            background_tasks.add_task(deliver_pending, engine)
+
         return {
             "message": "Ambassador registered successfully.",
             "user_id": user_id,
             "ambassador_id": ambassador_id,
             "status": "PENDING",
+            "welcome_email_queued": welcome_queued,
         }
 
     except HTTPException:

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import BrandLogo from "@/components/BrandLogo";
 
 export default function RegisterPage() {
   const [form, setForm] = useState({
@@ -104,9 +105,7 @@ export default function RegisterPage() {
         {/* Left side */}
         <section className="hidden bg-[#202629] p-12 text-white lg:flex lg:flex-col lg:justify-between">
           <div>
-            <div className="text-3xl font-bold">
-              C<span className="text-[#54B9B4]">i</span>PD
-            </div>
+            <BrandLogo className="w-44" />
 
             <p className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#54B9B4]">
               Campus Ambassador Programme
@@ -159,9 +158,7 @@ export default function RegisterPage() {
           <div className="w-full max-w-2xl">
 
             <div className="mb-8 lg:hidden">
-              <div className="text-3xl font-bold text-[#202629]">
-                C<span className="text-[#54B9B4]">i</span>PD
-              </div>
+              <BrandLogo className="w-36" />
             </div>
 
             <p className="text-sm font-semibold uppercase tracking-wider text-[#238C89]">
@@ -322,9 +319,10 @@ export default function RegisterPage() {
 
                   <p className="mt-2 text-sm leading-6 text-gray-500">
                     Your account has been saved successfully. Your ambassador
-                    profile is currently pending social verification. At your
-                    first sign-in, we will send the onboarding guide by email,
-                    including the WhatsApp group invite if it is available.
+                    profile is currently pending social verification. Your
+                    onboarding guide has been queued for email, including the
+                    WhatsApp group invite if it is available. Email delivery
+                    depends on the portal&apos;s mail configuration.
                   </p>
                 </div>
               )}

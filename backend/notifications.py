@@ -2,6 +2,7 @@
 
 import os
 import smtplib
+import ssl
 from datetime import date, datetime, timedelta
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
@@ -24,37 +25,58 @@ def email_enabled() -> bool:
     return os.getenv("EMAIL_DELIVERY_ENABLED", "false").lower() == "true"
 
 
+def missing_email_settings() -> list[str]:
+    required = ["SMTP_HOST", "SMTP_FROM"]
+    if os.getenv("SMTP_USERNAME"):
+        required.append("SMTP_PASSWORD")
+    return [name for name in required if not os.getenv(name)]
+
+
 def email_ready() -> bool:
-    username = os.getenv("SMTP_USERNAME")
-    has_credentials = not username or bool(os.getenv("SMTP_PASSWORD"))
+    return email_enabled() and not missing_email_settings()
+
+
+def automatic_email_cutoff() -> datetime | None:
+    value = os.getenv("EMAIL_AUTOSEND_AFTER")
+    if not value:
+        return None
+    cutoff = datetime.fromisoformat(value)
+    if cutoff.tzinfo is None:
+        raise ValueError("EMAIL_AUTOSEND_AFTER must include a timezone offset.")
+    return cutoff
+
+
+def portal_url() -> str:
+    return os.getenv("PUBLIC_FRONTEND_URL", "http://localhost:3000").rstrip("/")
+
+
+def welcome_email_body(full_name: str, invite_url: str | None) -> str:
+    body = (
+        f"Hello {full_name},\n\n"
+        "Welcome to the CiPD Campus Ambassador Programme! Your account is ready. "
+        "You can explore campaigns now; scoring eligibility starts after at least "
+        "one social account is verified.\n\n"
+        "YOUR NEXT STEPS\n"
+        "1. Sign in and complete your ambassador profile.\n"
+        "2. Connect a supported social account and complete verification.\n"
+        "3. Open a campaign and read its dates, official content URL, "
+        "required hashtag and full guidelines.\n"
+        "4. Publish your post on a connected platform during the campaign.\n"
+        "5. Submit the direct URL of your published post on the campaign page.\n"
+        "6. The admin checks the post and records verified metrics, then runs "
+        "the campaign rating calculation. Your rank and stars appear in Performance.\n\n"
+    )
+    if invite_url:
+        body += f"OFFICIAL WHATSAPP GROUP\nJoin using the admin-provided invite: {invite_url}\n\n"
     return (
-        email_enabled()
-        and bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_FROM"))
-        and has_credentials
+        body
+        + f"Step-by-step guide: {portal_url()}/ambassador/guide\n"
+        + f"Sign in: {portal_url()}/login\n\n"
+        + "CiPD Campus Ambassador Programme"
     )
 
 
 def queue_welcome_email(conn, user_id: int, full_name: str, invite_url: str | None) -> bool:
-    portal = os.getenv("PUBLIC_FRONTEND_URL", "http://localhost:3000").rstrip("/")
-    group_step = (
-        "2. Join the official ambassador WhatsApp group using this invite link: "
-        f"{invite_url}\n"
-        if invite_url else "2. Check the portal later for the optional WhatsApp group invite.\n"
-    )
-    body = (
-        f"Hello {full_name},\n\n"
-        "Welcome to the CiPD Campus Ambassador Programme.\n\n"
-        "Your next steps:\n"
-        "1. Sign in and complete your profile.\n"
-        f"{group_step}"
-        "3. Connect a supported social account. Your ambassador status becomes "
-        "ACTIVE after at least one account is verified.\n"
-        "4. Read each new campaign's official URL, dates, hashtag and guidelines.\n"
-        "5. Publish on a connected platform and submit the direct post URL.\n"
-        "6. Wait for admin verification of metrics and campaign rating calculation.\n\n"
-        f"Step-by-step guide: {portal}/ambassador/guide\n\n"
-        "This welcome email is sent once after registration."
-    )
     result = conn.execute(text("""
         INSERT INTO email_outbox (user_id, kind, subject, body)
         VALUES (:user_id, 'WELCOME', :subject, :body)
@@ -62,8 +84,8 @@ def queue_welcome_email(conn, user_id: int, full_name: str, invite_url: str | No
         RETURNING message_id
     """), {
         "user_id": user_id,
-        "subject": "Welcome to the CiPD Campus Ambassador Programme",
-        "body": body,
+        "subject": "Welcome to CiPD | Your ambassador next steps",
+        "body": welcome_email_body(full_name, invite_url),
     }).fetchone()
     return result is not None
 
@@ -96,33 +118,39 @@ def queue_broadcast(conn, subject: str, message: str, invite_url: str | None) ->
     return len(recipients)
 
 
+def campaign_email_body(full_name: str, campaign: dict) -> str:
+    description = campaign.get("description") or "Read the full campaign brief in the portal."
+    official_url = campaign.get("target_url") or "See the campaign page for official content."
+    hashtag = campaign.get("mandatory_hashtag") or "None specified"
+    return (
+        f"Hello {full_name},\n\n"
+        f"A new CiPD campaign has been listed: {campaign['title']}\n\n"
+        "CAMPAIGN DETAILS\n"
+        f"Campaign dates: {campaign['start_date']} to {campaign['end_date']}\n"
+        f"Official content URL: {official_url}\n"
+        f"Required hashtag: {hashtag}\n\n"
+        f"BRIEF AND GUIDELINES\n{description}\n\n"
+        "WHAT TO DO\n"
+        "1. Read the full brief and confirm your social account is connected.\n"
+        "2. Publish on a supported platform during the campaign dates, "
+        "following the guidelines and required hashtag.\n"
+        "3. Submit the direct URL of your published post on the campaign page.\n"
+        "4. The admin verifies post metrics and runs the campaign rating calculation.\n\n"
+        f"Open campaign: {portal_url()}/ambassador/campaigns/{campaign['campaign_id']}\n\n"
+        "CiPD Campus Ambassador Programme\n"
+        "You received this announcement because you registered as an ambassador."
+    )
+
+
 def queue_campaign_notifications(conn, campaign: dict) -> int:
     recipients = conn.execute(text("""
         SELECT user_id, full_name FROM users
         WHERE role = 'AMBASSADOR' AND password_hash IS NOT NULL
         ORDER BY user_id
     """)).fetchall()
-    portal = os.getenv("PUBLIC_FRONTEND_URL", "http://localhost:3000").rstrip("/")
     subject = f"New CiPD campaign: {campaign['title']}"
-    description = campaign.get("description") or "See the campaign brief in the portal."
-    official_url = campaign.get("target_url") or "See the campaign page for official content."
-    hashtag = campaign.get("mandatory_hashtag") or "No required hashtag"
     queued = 0
     for recipient in recipients:
-        body = (
-            f"Hello {recipient.full_name},\n\n"
-            f"A new CiPD campaign has been listed: {campaign['title']}\n"
-            f"Dates: {campaign['start_date']} to {campaign['end_date']}\n"
-            f"Official post or content URL: {official_url}\n"
-            f"Required hashtag: {hashtag}\n\n"
-            f"Campaign guidelines:\n{description}\n\n"
-            "Steps: read the full brief, confirm your social account is connected, "
-            "publish on a supported platform during campaign dates, include any "
-            "required hashtag, and submit the direct post URL in the portal. "
-            "An admin will verify your metrics and calculate ratings.\n"
-            f"Campaign page: {portal}/ambassador/campaigns/{campaign['campaign_id']}\n\n"
-            "You are receiving this because you registered as a CiPD ambassador."
-        )
         result = conn.execute(text("""
             INSERT INTO email_outbox (user_id, kind, campaign_id, subject, body)
             VALUES (:user_id, 'CAMPAIGN', :campaign_id, :subject, :body)
@@ -132,7 +160,7 @@ def queue_campaign_notifications(conn, campaign: dict) -> int:
             "user_id": recipient.user_id,
             "campaign_id": campaign["campaign_id"],
             "subject": subject,
-            "body": body,
+            "body": campaign_email_body(recipient.full_name, campaign),
         }).fetchone()
         queued += int(result is not None)
     return queued
@@ -184,6 +212,7 @@ def monthly_metrics(conn, month: date) -> list[dict]:
         LEFT JOIN latest_snapshots ls ON ls.post_id = mp.post_id
         LEFT JOIN ranked_ratings lr ON lr.ambassador_id = a.ambassador_id
         WHERE u.role = 'AMBASSADOR' AND u.password_hash IS NOT NULL
+          AND u.created_at < :month_end
         GROUP BY u.user_id, a.ambassador_id, u.full_name,
             lr.normalized_score, lr.percentile_rank, lr.star_rating,
             lr.current_rank
@@ -246,6 +275,40 @@ def format_platform_metrics(platforms: list[dict]) -> str:
     )
 
 
+def monthly_email_body(row: dict, label: str, benchmark: str) -> str:
+    if row["normalized_score"] is None:
+        rating = "Not calculated yet. A rating appears after verified campaign metrics are calculated."
+    else:
+        rating = (
+            f"Rank: #{row['current_rank']}\n"
+            f"Normalized score: {float(row['normalized_score']):.2f}\n"
+            f"Percentile: {float(row['percentile_rank']):.2f}%\n"
+            f"Star rating: {row['star_rating']} stars"
+        )
+    return (
+        f"Hello {row['full_name']},\n\n"
+        f"Here is your CiPD ambassador report for {label}.\n\n"
+        "YOUR VERIFIED MONTHLY ACTIVITY\n"
+        f"Total reach: {row['reach']:,}\n"
+        f"Total engagements: {row['engagements']:,}\n"
+        f"Verified campaign posts: {row['verified_posts']}\n\n"
+        "BY SOCIAL PLATFORM\n"
+        f"{format_platform_metrics(row['platform_metrics'])}\n\n"
+        "YOUR LATEST STORED RATING AS OF MONTH END\n"
+        f"{rating}\n\n"
+        "TOP 10 NORMALIZED LEADERBOARD BENCHMARK\n"
+        f"{benchmark}\n\n"
+        "Monthly activity uses posts published in this calendar month and their "
+        "latest admin-verified cumulative metrics recorded by month end. "
+        "Ratings are the latest stored calculations as of month end and may "
+        "reflect campaigns outside this month. The top 10 is ordered by "
+        "normalized score, not raw reach; platform figures show each leader's "
+        "verified activity for this report month.\n\n"
+        f"View performance: {portal_url()}/ambassador/performance\n\n"
+        "CiPD Campus Ambassador Programme"
+    )
+
+
 def queue_monthly_reports(conn, month: date) -> int:
     if month.day != 1:
         raise ValueError("Report month must be the first day of a month.")
@@ -262,22 +325,6 @@ def queue_monthly_reports(conn, month: date) -> int:
     label = month.strftime("%B %Y")
     queued = 0
     for row in rows:
-        body = (
-            f"Hello {row['full_name']},\n\n"
-            f"Your CiPD ambassador report for {label}\n"
-            f"Reach: {row['reach']:,}\n"
-            f"Engagements: {row['engagements']:,}\n"
-            f"Verified campaign posts: {row['verified_posts']}\n\n"
-            "Your verified metrics by platform:\n"
-            f"{format_platform_metrics(row['platform_metrics'])}\n\n"
-            "Top 10 normalized leaderboard benchmark:\n"
-            f"{benchmark}\n\n"
-            "This report counts posts submitted during this calendar month and uses "
-            "each post's latest admin-verified cumulative metric snapshot recorded "
-            "before month end. The benchmark uses each ambassador's latest stored "
-            "normalized campaign rating as of month end; it does not rank raw reach. "
-            "Sign in to the CiPD portal for campaign-level details."
-        )
         result = conn.execute(text("""
             INSERT INTO email_outbox (user_id, kind, report_month, subject, body)
             VALUES (:user_id, 'MONTHLY_REPORT', :month, :subject, :body)
@@ -285,7 +332,8 @@ def queue_monthly_reports(conn, month: date) -> int:
             RETURNING message_id
         """), {
             "user_id": row["user_id"], "month": month,
-            "subject": f"Your CiPD ambassador report — {label}", "body": body,
+            "subject": f"Your CiPD ambassador report | {label}",
+            "body": monthly_email_body(row, label, benchmark),
         }).fetchone()
         queued += int(result is not None)
     return queued
@@ -296,18 +344,20 @@ def queue_previous_month(engine) -> int:
         return queue_monthly_reports(conn, previous_month())
 
 
-def deliver_pending(engine, limit: int = 100) -> dict:
+def deliver_pending(engine, limit: int = 100, include_older: bool = False) -> dict:
     if not email_ready():
         return {"sent": 0, "failed": 0, "configured": False}
+    cutoff = None if include_older else automatic_email_cutoff()
     with engine.begin() as conn:
         jobs = conn.execute(text("""
             WITH claim AS (
                 SELECT message_id FROM email_outbox
-                WHERE status = 'PENDING'
-                   OR (status = 'FAILED' AND attempts < 3
-                       AND last_attempt_at < CURRENT_TIMESTAMP - INTERVAL '30 minutes')
-                   OR (status = 'SENDING'
-                       AND last_attempt_at < CURRENT_TIMESTAMP - INTERVAL '1 hour')
+                WHERE (:cutoff IS NULL OR created_at >= CAST(:cutoff AS TIMESTAMPTZ))
+                  AND (status = 'PENDING'
+                    OR (status = 'FAILED' AND attempts < 3
+                        AND last_attempt_at < CURRENT_TIMESTAMP - INTERVAL '30 minutes')
+                    OR (status = 'SENDING'
+                        AND last_attempt_at < CURRENT_TIMESTAMP - INTERVAL '1 hour'))
                 ORDER BY message_id
                 FOR UPDATE SKIP LOCKED
                 LIMIT :limit
@@ -316,7 +366,7 @@ def deliver_pending(engine, limit: int = 100) -> dict:
                 attempts = attempts + 1, last_attempt_at = CURRENT_TIMESTAMP
             FROM claim WHERE o.message_id = claim.message_id
             RETURNING o.message_id, o.user_id, o.subject, o.body
-        """), {"limit": limit}).fetchall()
+        """), {"limit": limit, "cutoff": cutoff}).fetchall()
 
     sent = failed = 0
     for job in jobs:
@@ -335,7 +385,7 @@ def deliver_pending(engine, limit: int = 100) -> dict:
                 port = int(os.getenv("SMTP_PORT", "587"))
                 with smtplib.SMTP(host, port, timeout=20) as smtp:
                     if os.getenv("SMTP_USE_TLS", "true").lower() == "true":
-                        smtp.starttls()
+                        smtp.starttls(context=ssl.create_default_context())
                     username = os.getenv("SMTP_USERNAME")
                     if username:
                         smtp.login(username, os.getenv("SMTP_PASSWORD", ""))

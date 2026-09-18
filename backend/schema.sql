@@ -8,6 +8,7 @@ CREATE TABLE users (
     role VARCHAR(20) CHECK (role IN ('ADMIN', 'AMBASSADOR')),
     password_hash TEXT,
     phone_number VARCHAR(16),
+    contact_email VARCHAR(150),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

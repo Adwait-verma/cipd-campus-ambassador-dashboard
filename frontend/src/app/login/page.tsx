@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import BrandLogo from "@/components/BrandLogo";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -77,9 +78,7 @@ export default function LoginPage() {
         {/* Left branding */}
         <section className="hidden bg-[#202629] p-12 text-white lg:flex lg:flex-col lg:justify-between">
           <div>
-            <div className="text-3xl font-bold tracking-tight">
-              C<span className="text-[#54B9B4]">i</span>PD
-            </div>
+            <BrandLogo className="w-44" />
 
             <p className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#54B9B4]">
               Campus Ambassador Programme
@@ -137,9 +136,7 @@ export default function LoginPage() {
         <section className="flex items-center justify-center px-6 py-12">
           <div className="w-full max-w-md">
             <div className="mb-10 lg:hidden">
-              <div className="text-3xl font-bold text-[#202629]">
-                C<span className="text-[#54B9B4]">i</span>PD
-              </div>
+              <BrandLogo className="w-36" />
             </div>
 
             <p className="text-sm font-semibold uppercase tracking-wider text-[#238C89]">

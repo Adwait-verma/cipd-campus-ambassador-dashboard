@@ -18,7 +18,7 @@ New ambassadors begin as `PENDING`. They become `ACTIVE` after at least one soci
 
 Administrators create campaigns with platform, schedule, and content requirements. An eligible ambassador can submit a campaign-post URL for a connected, verified platform. The post remains pending until an administrator records and verifies reach, likes, comments, shares, saves, and views. The application then normalizes reach and engagement within each platform, weights them 30% and 70%, averages multiple post scores, assigns campaign rank and percentile, and awards three to five stars from that percentile. Stored ratings power awards, leaderboards, and analytics; analytics uses the latest metric snapshot for each post. Ambassadors can also maintain their own profile details.
 
-Registration remains open with or without a WhatsApp link. After an ambassador's first successful login, the system queues one welcome email with onboarding and submission steps; it includes the admin-configured group invite when available. Campaign creation queues exactly one email per registered ambassador for that newly listed campaign, containing its official URL and guidelines. Administrators can also queue a one-time announcement for all ambassadors. A background worker sends queued mail when SMTP delivery is enabled. On the first day of each month, it queues each ambassador's previous-month verified metrics and a top-10 benchmark based on the existing normalized leaderboard, including platform-level metrics. Unique database keys prevent duplicate welcome, campaign, or monthly emails.
+Registration remains open with or without a WhatsApp link. Registration queues one welcome email with onboarding and submission steps; it includes the admin-configured group invite when available. The first successful login also queues a missing welcome email for accounts created before this change. This is one message per account, not one per login. Campaign creation queues exactly one email per registered ambassador for that newly listed campaign, containing its official URL and guidelines. Administrators can also queue a one-time announcement for all ambassadors. A background worker sends queued mail when SMTP delivery is enabled. On the first day of each month, it queues each ambassador's previous-month verified metrics and a top-10 benchmark based on the existing normalized leaderboard, including platform-level metrics. Unique database keys prevent duplicate welcome, campaign, or monthly emails.
 
 ## Windows setup
 
@@ -49,13 +49,16 @@ python -c "import secrets; print(secrets.token_urlsafe(64))"
 
 If PowerShell blocks activation, first run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`. Edit the new local `.env` to configure `DATABASE_URL` for the database above and set `JWT_SECRET` to the generated value. Never commit `.env` or reuse a demo secret in production.
 
-Email delivery is disabled by default. To enable it, set `EMAIL_DELIVERY_ENABLED=true` and configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and, when required, `SMTP_USERNAME` and `SMTP_PASSWORD`. Keep those values only in `.env`. `PUBLIC_FRONTEND_URL` controls links included in campaign emails.
+Email delivery is disabled by default. To enable it, set `EMAIL_DELIVERY_ENABLED=true` and configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and, when required, `SMTP_USERNAME` and `SMTP_PASSWORD`. Set `SMTP_USE_TLS` according to your mail provider's instructions. For Gmail SMTP, use a Google app password, not the normal account password. A WhatsApp invite link does not configure mail delivery. Keep credentials only in `.env` and restart FastAPI after editing it. To prevent automatic sending of old queued messages during a demo, set `EMAIL_AUTOSEND_AFTER` to a timezone-aware timestamp such as `2026-09-18T14:21:35+05:30`; earlier messages remain queued for deliberate admin review. **Admin → Settings → Email delivery** shows pending, sent, failed, and held-older counts. **Send all pending now** includes older mail after confirmation. `PUBLIC_FRONTEND_URL` controls links included in emails. Do not put SMTP passwords in chat, screenshots, or Git.
+
+Before enabling delivery, run `python check_email.py` to test SMTP authentication, then `python check_email.py --send-self` to send one message only to the sender mailbox. These checks do not touch the queued ambassador emails. Enable delivery and restart FastAPI only after both succeed.
 
 For an existing database created before contact details and notifications were added, apply the additive migration once:
 
 ```powershell
 psql -U postgres -d cipd_ambassadors -f migrations\20260916_contacts_notifications.sql
 psql -U postgres -d cipd_ambassadors -f migrations\20260917_broadcasts.sql
+psql -U postgres -d cipd_ambassadors -f migrations\20260918_admin_contact.sql
 ```
 
 To assign a password to an existing administrator, run:
@@ -86,13 +89,14 @@ npm run dev
 
 Open `http://localhost:3000`. For a production-mode local check, run `npm run build` followed by `npm run start`.
 
-Sign in as an administrator and open **Settings** to save the official `https://chat.whatsapp.com/...` group invite link or email all ambassadors. Registration stays open when the link is absent. Ambassadors can view the current link under **How It Works**.
+Sign in as an administrator and open **Settings** to save the official `https://chat.whatsapp.com/...` group invite link, add your own optional contact email/phone, or email all ambassadors. Contact details remain admin-only and do not change the login email or SMTP sender. Registration stays open when the link is absent. Ambassadors can view the current link under **How It Works**.
 
 ## Useful validation commands
 
 ```powershell
 # Backend syntax/import check (run inside backend with the venv active)
 python -c "import main; print(main.health())"
+python -m unittest discover -s tests -v
 
 # Frontend checks (run inside frontend)
 npm run lint
@@ -103,7 +107,7 @@ npm run build
 
 - Social account linking is a manual prototype and does not perform real OAuth authorization.
 - Social metrics are entered and verified manually by an administrator; no platform metrics API is connected.
-- The admin supplies the optional group invite URL under **Settings**. An ambassador receives it in the one-time welcome email only when it is available at first login and can always view the latest link under **How It Works**. The portal cannot silently add the person to a group. The separate WhatsApp action opens a direct chat with a prefilled greeting, and the admin must press Send.
+- The admin supplies the optional group invite URL under **Settings**. An ambassador receives it in the one-time welcome email only when it is available at registration and can always view the latest link under **How It Works**. The portal cannot silently add the person to a group. The separate WhatsApp action opens a direct chat with a prefilled greeting, and the admin must press Send.
 - Campaign and monthly emails are real SMTP-backed jobs only after valid SMTP settings are supplied. Failed deliveries are retained for review and limited retries; no credentials are included in the repository.
 - The frontend API URL and backend CORS origins target local development (`localhost`/`127.0.0.1`). Configure both explicitly before deployment.
 - The JWT and user profile are stored in browser `sessionStorage`, separately for each tab/window. You can sign in as admin in one window and ambassador in another; refreshing preserves each login, and logging out affects only that window. A fresh window requires sign-in, and token expiry still applies. After upgrading from the old shared storage, sign in again once in each window. This storage is still accessible to JavaScript; a production deployment should use a hardened session strategy, such as secure, HTTP-only cookies with appropriate CSRF protection.

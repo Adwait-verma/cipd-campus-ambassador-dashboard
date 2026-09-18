@@ -3,8 +3,23 @@
 import { authFetch } from "@/lib/api";
 import { useEffect, useState } from "react";
 
+type EmailStatus = {
+  delivery_enabled: boolean;
+  smtp_configured: boolean;
+  delivery_ready: boolean;
+  missing_settings: string[];
+  older_queued: number;
+  counts: { kind: string; status: string; count: number }[];
+};
+
 export default function AdminSettingsPage() {
   const [inviteUrl, setInviteUrl] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
+  const [contactLoading, setContactLoading] = useState(true);
+  const [savingContact, setSavingContact] = useState(false);
+  const [contactMessage, setContactMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -12,6 +27,16 @@ export default function AdminSettingsPage() {
   const [announcement, setAnnouncement] = useState("");
   const [broadcasting, setBroadcasting] = useState(false);
   const [broadcastMessage, setBroadcastMessage] = useState("");
+  const [emailStatus, setEmailStatus] = useState<EmailStatus | null>(null);
+  const [emailStatusMessage, setEmailStatusMessage] = useState("");
+  const [sendingPending, setSendingPending] = useState(false);
+
+  async function refreshEmailStatus() {
+    const response = await authFetch("http://127.0.0.1:8000/admin/notifications/status");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Could not load email status.");
+    setEmailStatus(data);
+  }
 
   useEffect(() => {
     authFetch("http://127.0.0.1:8000/admin/settings")
@@ -22,7 +47,47 @@ export default function AdminSettingsPage() {
       })
       .catch((error) => setMessage(error instanceof Error ? error.message : "Could not load settings."))
       .finally(() => setLoading(false));
+    authFetch("http://127.0.0.1:8000/admin/contact")
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not load admin contact details.");
+        setLoginEmail(data.email || "");
+        setContactEmail(data.contact_email || "");
+        setContactPhone(data.phone_number || "");
+      })
+      .catch((error) =>
+        setContactMessage(error instanceof Error ? error.message : "Could not load admin contact details.")
+      )
+      .finally(() => setContactLoading(false));
+    authFetch("http://127.0.0.1:8000/admin/notifications/status")
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not load email status.");
+        setEmailStatus(data);
+      })
+      .catch((error) =>
+        setEmailStatusMessage(error instanceof Error ? error.message : "Could not load email status.")
+      );
   }, []);
+
+  async function sendPending() {
+    if (!window.confirm("Send all queued emails now, including older welcome and monthly-report messages?")) return;
+    setSendingPending(true);
+    setEmailStatusMessage("");
+    try {
+      const response = await authFetch("http://127.0.0.1:8000/admin/notifications/send-pending", {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not send pending email.");
+      setEmailStatusMessage(`${data.sent} sent; ${data.failed} failed. Check the counts below.`);
+      await refreshEmailStatus();
+    } catch (error) {
+      setEmailStatusMessage(error instanceof Error ? error.message : "Could not send pending email.");
+    } finally {
+      setSendingPending(false);
+    }
+  }
 
   async function saveSettings(event: React.FormEvent) {
     event.preventDefault();
@@ -44,6 +109,30 @@ export default function AdminSettingsPage() {
     }
   }
 
+  async function saveContact(event: React.FormEvent) {
+    event.preventDefault();
+    setSavingContact(true);
+    setContactMessage("");
+    try {
+      const response = await authFetch("http://127.0.0.1:8000/admin/contact", {
+        method: "PUT",
+        body: JSON.stringify({
+          contact_email: contactEmail.trim() || null,
+          phone_number: contactPhone.trim() || null,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not save admin contact details.");
+      setContactEmail(data.contact_email || "");
+      setContactPhone(data.phone_number || "");
+      setContactMessage("Admin contact details saved.");
+    } catch (error) {
+      setContactMessage(error instanceof Error ? error.message : "Could not save admin contact details.");
+    } finally {
+      setSavingContact(false);
+    }
+  }
+
   async function sendToAll(event: React.FormEvent) {
     event.preventDefault();
     if (!window.confirm("Queue this email for every registered ambassador?")) return;
@@ -61,6 +150,7 @@ export default function AdminSettingsPage() {
       );
       setSubject("");
       setAnnouncement("");
+      await refreshEmailStatus();
     } catch (error) {
       setBroadcastMessage(error instanceof Error ? error.message : "Could not queue the email.");
     } finally {
@@ -74,7 +164,7 @@ export default function AdminSettingsPage() {
     <section className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
       <h1 className="text-3xl font-bold text-[#202629]">Programme settings</h1>
       <p className="mt-3 text-sm leading-6 text-gray-600">
-        Add the official WhatsApp group invite link when available. Registration remains open without it. Ambassadors can see the link here in the portal, and new ambassadors receive it with their welcome email when it is set before their first login.
+        Add the official WhatsApp group invite link when available. Registration remains open without it. Ambassadors can see the link in the portal, and new ambassadors receive it with their welcome email when it is set at registration.
       </p>
       <form onSubmit={saveSettings} className="mt-8 space-y-5">
         <div>
@@ -95,6 +185,65 @@ export default function AdminSettingsPage() {
         </button>
       </form>
       {message && <p role="status" className="mt-5 text-sm text-[#238C89]">{message}</p>}
+    </section>
+    <section className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
+      <h2 className="text-2xl font-bold text-[#202629]">Admin contact details</h2>
+      <p className="mt-2 text-sm leading-6 text-gray-600">
+        Add a contact email and phone number for this admin account. These details are visible only in admin settings; they do not change your login email or the email sender.
+      </p>
+      <p className="mt-4 text-sm text-gray-600">
+        Login email: <span className="font-medium text-[#202629]">{contactLoading ? "Loading..." : loginEmail}</span>
+      </p>
+      <form onSubmit={saveContact} className="mt-5 space-y-4">
+        <label className="block text-sm font-semibold text-[#202629]">
+          Contact email
+          <input type="email" value={contactEmail} onChange={(event) => setContactEmail(event.target.value)} maxLength={150} placeholder="name@example.com" disabled={contactLoading} className="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3" />
+        </label>
+        <label className="block text-sm font-semibold text-[#202629]">
+          Contact phone number
+          <input type="tel" value={contactPhone} onChange={(event) => setContactPhone(event.target.value)} maxLength={20} placeholder="+91 98765 43210" disabled={contactLoading} className="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3" />
+        </label>
+        <button disabled={contactLoading || savingContact} className="rounded-xl bg-[#202629] px-5 py-3 font-semibold text-white disabled:opacity-50">
+          {savingContact ? "Saving..." : "Save contact details"}
+        </button>
+      </form>
+      {contactMessage && <p role="status" className="mt-4 text-sm text-gray-700">{contactMessage}</p>}
+    </section>
+    <section className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
+      <h2 className="text-2xl font-bold text-[#202629]">Email delivery</h2>
+      {emailStatus && (
+        <>
+          <p className="mt-2 text-sm leading-6 text-gray-700">
+            {emailStatus.delivery_ready
+              ? "SMTP settings are present. New emails will be attempted automatically; confirm delivery using the sent and failed counts below."
+              : "Emails are queued, but cannot reach inboxes until SMTP delivery is enabled and configured on the backend."}
+          </p>
+          {!emailStatus.delivery_enabled && <p className="mt-2 text-sm text-amber-800">Set EMAIL_DELIVERY_ENABLED=true in backend/.env.</p>}
+          {emailStatus.missing_settings.length > 0 && (
+            <p className="mt-2 text-sm text-amber-800">Missing settings: {emailStatus.missing_settings.join(", ")}.</p>
+          )}
+          {emailStatus.older_queued > 0 && (
+            <p className="mt-2 text-sm text-amber-800">
+              {emailStatus.older_queued} older queued email(s) are held from automatic delivery.
+              The button below includes them, so review before sending.
+            </p>
+          )}
+          <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+            {["PENDING", "SENDING", "SENT", "FAILED"].map((state) => (
+              <div key={state} className="rounded-xl border border-gray-200 p-3">
+                <span className="block font-semibold text-gray-600">{state.toLowerCase()}</span>
+                <span className="text-2xl font-bold text-[#202629]">
+                  {emailStatus.counts.filter((entry) => entry.status === state).reduce((sum, entry) => sum + entry.count, 0)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={sendPending} disabled={!emailStatus.delivery_ready || sendingPending} className="mt-5 rounded-xl bg-[#202629] px-5 py-3 font-semibold text-white disabled:opacity-50">
+            {sendingPending ? "Sending..." : "Send all pending now"}
+          </button>
+        </>
+      )}
+      {emailStatusMessage && <p role="status" className="mt-4 text-sm text-gray-700">{emailStatusMessage}</p>}
     </section>
     <section className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
       <h2 className="text-2xl font-bold text-[#202629]">Email all ambassadors</h2>
