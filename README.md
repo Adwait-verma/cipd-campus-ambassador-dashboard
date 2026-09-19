@@ -1,8 +1,14 @@
 # CiPD Campus Ambassador Dashboard
 
+> **BTP group project:** Developed collaboratively for the CiPD Campus Ambassador Programme. Adwait Verma leads project coordination, technical integration, testing, and release management. Individual contributions remain attributable through the Git history.
+
 ## Project purpose
 
 This repository contains a demo dashboard for managing CiPD campus ambassador campaigns. Ambassadors register with email and mobile contact details, connect a social profile, join campaigns, submit campaign posts, and track ratings and awards. Administrators configure the programme WhatsApp group link, create campaigns, contact ambassadors, export the ambassador directory, verify reported metrics, and review rankings and analytics.
+
+## Project leadership and collaboration
+
+This is a collaborative academic project, not an individual-only submission. Adwait Verma coordinates the roadmap, integrates frontend and backend work, validates releases, and maintains this project showcase. Collaborator authorship is preserved in commits and branches. The official shared repository is [`parth23369/cipd-ambassador-dashboard`](https://github.com/parth23369/cipd-ambassador-dashboard).
 
 ## Technology and project structure
 
