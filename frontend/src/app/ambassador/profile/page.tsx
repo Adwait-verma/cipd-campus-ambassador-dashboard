@@ -43,14 +43,14 @@ export default function ProfilePage() {
         const stored = sessionStorage.getItem("cipd_user");
 
         if (!stored) {
-          window.location.href = "/login";
+          window.location.replace("/login");
           return;
         }
 
         const user: StoredUser = JSON.parse(stored);
 
         if (user.role !== "AMBASSADOR") {
-          window.location.href = "/login";
+          window.location.replace("/login");
           return;
         }
 

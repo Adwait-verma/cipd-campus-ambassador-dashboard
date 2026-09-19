@@ -96,8 +96,23 @@ CREATE TABLE ambassador_ratings (
 
 CREATE TABLE portal_settings (
     settings_id INT PRIMARY KEY CHECK (settings_id = 1),
-    whatsapp_group_invite_url TEXT NOT NULL
+    whatsapp_group_invite_url TEXT,
+    support_contact_email VARCHAR(150),
+    support_phone_number VARCHAR(16)
 );
+
+CREATE TABLE admin_activity_logs (
+    activity_id BIGSERIAL PRIMARY KEY,
+    admin_user_id INT REFERENCES users(user_id) ON DELETE SET NULL,
+    action VARCHAR(60) NOT NULL,
+    entity_type VARCHAR(50),
+    entity_id BIGINT,
+    summary TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX admin_activity_logs_created_at_idx
+ON admin_activity_logs (created_at DESC, activity_id DESC);
 
 CREATE TABLE email_broadcasts (
     broadcast_id BIGSERIAL PRIMARY KEY,
@@ -106,13 +121,36 @@ CREATE TABLE email_broadcasts (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE password_reset_requests (
+    reset_request_id BIGSERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    token_hash CHAR(64) UNIQUE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    used_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE password_reset_attempts (
+    attempt_id BIGSERIAL PRIMARY KEY,
+    email_hash CHAR(64) NOT NULL,
+    ip_hash CHAR(64) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX password_reset_attempts_email_idx
+ON password_reset_attempts (email_hash, created_at DESC);
+
+CREATE INDEX password_reset_attempts_ip_idx
+ON password_reset_attempts (ip_hash, created_at DESC);
+
 CREATE TABLE email_outbox (
     message_id BIGSERIAL PRIMARY KEY,
     user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    kind VARCHAR(30) NOT NULL CHECK (kind IN ('WELCOME', 'CAMPAIGN', 'MONTHLY_REPORT', 'BROADCAST')),
+    kind VARCHAR(30) NOT NULL CHECK (kind IN ('WELCOME', 'CAMPAIGN', 'MONTHLY_REPORT', 'BROADCAST', 'PASSWORD_RESET', 'PASSWORD_CHANGED')),
     campaign_id INT REFERENCES campaigns(campaign_id) ON DELETE CASCADE,
     report_month DATE,
     broadcast_id BIGINT REFERENCES email_broadcasts(broadcast_id) ON DELETE CASCADE,
+    reset_request_id BIGINT REFERENCES password_reset_requests(reset_request_id) ON DELETE CASCADE,
     subject TEXT NOT NULL,
     body TEXT NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED')),
@@ -124,7 +162,11 @@ CREATE TABLE email_outbox (
 );
 
 CREATE UNIQUE INDEX email_outbox_once_per_user_event
-ON email_outbox (user_id, kind, COALESCE(campaign_id, -1), COALESCE(report_month, DATE '0001-01-01'), COALESCE(broadcast_id, -1));
+ON email_outbox (
+    user_id, kind, COALESCE(campaign_id, -1),
+    COALESCE(report_month, DATE '0001-01-01'),
+    COALESCE(broadcast_id, -1), COALESCE(reset_request_id, -1)
+);
 
 -- Quick sanity-check seed data so you can verify the connection tonight
 INSERT INTO users (full_name, email, role) VALUES

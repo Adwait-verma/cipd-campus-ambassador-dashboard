@@ -20,41 +20,45 @@ class AdminContactTests(unittest.TestCase):
             require_admin({"user_id": 3, "role": "AMBASSADOR"})
         self.assertEqual(error.exception.status_code, 403)
 
-    def test_admin_contact_is_read_from_own_account(self):
+    def test_admin_reads_global_help_contact_and_own_login_email(self):
         engine = MagicMock()
         conn = engine.connect.return_value.__enter__.return_value
-        conn.execute.return_value.fetchone.return_value = SimpleNamespace(
-            _mapping={
-                "email": "login@example.org",
-                "contact_email": "contact@example.org",
-                "phone_number": "+919876543210",
-            }
+        login_result = MagicMock()
+        login_result.scalar.return_value = "login@example.org"
+        contact_result = MagicMock()
+        contact_result.fetchone.return_value = SimpleNamespace(
+            support_contact_email="contact@example.org",
+            support_phone_number="+919876543210",
         )
+        conn.execute.side_effect = [login_result, contact_result]
         with patch("main.engine", engine):
             result = get_admin_contact({"user_id": 7, "role": "ADMIN"})
         self.assertEqual(result["contact_email"], "contact@example.org")
-        self.assertEqual(conn.execute.call_args.args[1], {"user_id": 7})
+        self.assertEqual(result["email"], "login@example.org")
+        self.assertEqual(conn.execute.call_args_list[0].args[1], {"user_id": 7})
 
     def test_update_keeps_login_email_separate(self):
         engine = MagicMock()
         conn = engine.begin.return_value.__enter__.return_value
-        conn.execute.return_value.fetchone.return_value = SimpleNamespace(
-            _mapping={
-                "email": "login@example.org",
-                "contact_email": "contact@example.org",
-                "phone_number": "+919876543210",
-            }
+        login_result = MagicMock()
+        login_result.scalar.return_value = "login@example.org"
+        update_result = MagicMock()
+        update_result.fetchone.return_value = SimpleNamespace(
+            support_contact_email="contact@example.org",
+            support_phone_number="+919876543210",
         )
+        conn.execute.side_effect = [login_result, update_result, MagicMock()]
         request = AdminContactRequest(
             contact_email="contact@example.org",
             phone_number="98765 43210",
         )
         with patch("main.engine", engine):
             result = update_admin_contact(request, {"user_id": 7, "role": "ADMIN"})
-        params = conn.execute.call_args.args[1]
+        params = conn.execute.call_args_list[1].args[1]
         self.assertEqual(params["phone_number"], "+919876543210")
-        self.assertEqual(params["user_id"], 7)
+        self.assertNotIn("user_id", params)
         self.assertEqual(result["email"], "login@example.org")
+        self.assertIn("INSERT INTO admin_activity_logs", str(conn.execute.call_args_list[2].args[0]))
 
     def test_invalid_phone_is_rejected_before_write(self):
         engine = MagicMock()

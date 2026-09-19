@@ -31,6 +31,11 @@ const navigation = [
     icon: "?",
   },
   {
+    name: "Help & Contact",
+    href: "/ambassador/help",
+    icon: "!",
+  },
+  {
     name: "Profile",
     href: "/ambassador/profile",
     icon: "○",

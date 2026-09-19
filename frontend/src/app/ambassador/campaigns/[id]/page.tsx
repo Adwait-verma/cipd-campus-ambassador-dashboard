@@ -4,7 +4,7 @@ import { authFetch } from "@/lib/api";
 import { submissionProgress } from "@/lib/submission-progress";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type LoggedInUser = {
   user_id: number;
@@ -61,31 +61,7 @@ export default function CampaignDetailPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    const storedUser = sessionStorage.getItem("cipd_user");
-
-    if (!storedUser) {
-      window.location.href = "/login";
-      return;
-    }
-
-    try {
-      const parsedUser: LoggedInUser = JSON.parse(storedUser);
-
-      if (parsedUser.role !== "AMBASSADOR") {
-        window.location.href = "/login";
-        return;
-      }
-
-      queueMicrotask(() => setUser(parsedUser));
-      loadPage(parsedUser.user_id);
-    } catch {
-      sessionStorage.removeItem("cipd_user");
-      window.location.href = "/login";
-    }
-  }, [campaignId]);
-
-  async function loadPage(userId: number) {
+  const loadPage = useCallback(async (userId: number) => {
     try {
       setLoading(true);
       setError("");
@@ -121,7 +97,31 @@ export default function CampaignDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [campaignId]);
+
+  useEffect(() => {
+    const storedUser = sessionStorage.getItem("cipd_user");
+
+    if (!storedUser) {
+      window.location.replace("/login");
+      return;
+    }
+
+    try {
+      const parsedUser: LoggedInUser = JSON.parse(storedUser);
+
+      if (parsedUser.role !== "AMBASSADOR") {
+        window.location.replace("/login");
+        return;
+      }
+
+      queueMicrotask(() => setUser(parsedUser));
+      queueMicrotask(() => loadPage(parsedUser.user_id));
+    } catch {
+      sessionStorage.removeItem("cipd_user");
+      window.location.replace("/login");
+    }
+  }, [loadPage]);
 
   async function handleSubmit() {
     if (!user || !postUrl.trim()) {

@@ -1,8 +1,14 @@
 # CiPD Campus Ambassador Dashboard
 
+> **BTP group project:** Developed collaboratively for the CiPD Campus Ambassador Programme. Adwait Verma leads project coordination, technical integration, and release management, with collaborator contributions preserved in the Git history.
+
 ## Project purpose
 
 This repository contains a demo dashboard for managing CiPD campus ambassador campaigns. Ambassadors register with email and mobile contact details, connect a social profile, join campaigns, submit campaign posts, and track ratings and awards. Administrators configure the programme WhatsApp group link, create campaigns, contact ambassadors, export the ambassador directory, verify reported metrics, and review rankings and analytics.
+
+## Collaboration and ownership
+
+This is a group academic project rather than an individual-only submission. Adwait Verma coordinates the roadmap, integrates frontend and backend work, validates releases, and maintains the project handoff. Feature authorship and collaborator work remain attributable through commits and branches. Contributors should use focused feature branches and open a pull request for review before changes enter `main`.
 
 ## Technology and project structure
 
@@ -12,13 +18,13 @@ This repository contains a demo dashboard for managing CiPD campus ambassador ca
 
 ## Application workflow
 
-Registration creates a user and an ambassador profile. Login verifies the Argon2 password hash and returns a JWT. Protected routes validate that token and enforce the `ADMIN` or `AMBASSADOR` role; ambassador-owned resources are resolved from the authenticated user rather than a client-supplied user ID.
+Registration creates a user and an ambassador profile. Login verifies the Argon2 password hash and returns a JWT. Protected routes validate that token and enforce the `ADMIN` or `AMBASSADOR` role; ambassador-owned resources are resolved from the authenticated user rather than a client-supplied user ID. Forgotten passwords use a single-use email link that expires after 30 minutes. Only a SHA-256 hash of the reset token is stored, and a successful reset keeps the user on the normal sign-in path. Reset requests are limited to three attempts per email in 15 minutes and 20 attempts per client IP in one hour; the stored email/IP identifiers are keyed hashes rather than readable values.
 
 New ambassadors begin as `PENDING`. They become `ACTIVE` after at least one social account is marked verified, and return to `PENDING` if their last verified account is disconnected. Only active ambassadors participate in scoring, ranking, and awards.
 
 Administrators create campaigns with platform, schedule, and content requirements. An eligible ambassador can submit a campaign-post URL for a connected, verified platform. The post remains pending until an administrator records and verifies reach, likes, comments, shares, saves, and views. The application then normalizes reach and engagement within each platform, weights them 30% and 70%, averages multiple post scores, assigns campaign rank and percentile, and awards three to five stars from that percentile. Stored ratings power awards, leaderboards, and analytics; analytics uses the latest metric snapshot for each post. Ambassadors can also maintain their own profile details.
 
-Registration remains open with or without a WhatsApp link. Registration queues one welcome email with onboarding and submission steps; it includes the admin-configured group invite when available. The first successful login also queues a missing welcome email for accounts created before this change. This is one message per account, not one per login. Campaign creation queues exactly one email per registered ambassador for that newly listed campaign, containing its official URL and guidelines. Administrators can also queue a one-time announcement for all ambassadors. A background worker sends queued mail when SMTP delivery is enabled. On the first day of each month, it queues each ambassador's previous-month verified metrics and a top-10 benchmark based on the existing normalized leaderboard, including platform-level metrics. Unique database keys prevent duplicate welcome, campaign, or monthly emails.
+Registration remains open with or without a WhatsApp link. Registration queues one welcome email with onboarding and submission steps; it includes the admin-configured group invite when available. The first successful login also queues a missing welcome email for accounts created before this change. This is one message per account, not one per login. Before publishing a campaign, the admin sees the subject, message, and recipient count; confirmation then creates the campaign and queues exactly one email per registered ambassador. Administrators can also queue a one-time announcement for everyone or a selected ambassador. A background worker sends queued mail when SMTP delivery is enabled. On the first day of each month, it queues each ambassador's previous-month verified metrics and a top-10 benchmark based on the existing normalized leaderboard, including platform-level metrics. Unique database keys prevent duplicate welcome, campaign, or monthly emails.
 
 ## Windows setup
 
@@ -59,6 +65,8 @@ For an existing database created before contact details and notifications were a
 psql -U postgres -d cipd_ambassadors -f migrations\20260916_contacts_notifications.sql
 psql -U postgres -d cipd_ambassadors -f migrations\20260917_broadcasts.sql
 psql -U postgres -d cipd_ambassadors -f migrations\20260918_admin_contact.sql
+psql -U postgres -d cipd_ambassadors -f migrations\20260919_help_and_password_reset.sql
+psql -U postgres -d cipd_ambassadors -f migrations\20260920_admin_activity_rate_limits.sql
 ```
 
 To assign a password to an existing administrator, run:
@@ -89,7 +97,7 @@ npm run dev
 
 Open `http://localhost:3000`. For a production-mode local check, run `npm run build` followed by `npm run start`.
 
-Sign in as an administrator and open **Settings** to save the official `https://chat.whatsapp.com/...` group invite link, add your own optional contact email/phone, or email all ambassadors. Contact details remain admin-only and do not change the login email or SMTP sender. Registration stays open when the link is absent. Ambassadors can view the current link under **How It Works**.
+Sign in as an administrator and open **Settings** to save the official `https://chat.whatsapp.com/...` group invite link, set the programme help email/phone, or email all or one selected ambassador. The help contact is visible to ambassadors under **Help & Contact** and does not change the login email or SMTP sender. Registration stays open when the group link is absent. Ambassadors can view the current group link under **How It Works**. The protected **Activity Log** page shows the latest 200 important administrative actions without recording passwords, access tokens, or message bodies.
 
 ## Useful validation commands
 

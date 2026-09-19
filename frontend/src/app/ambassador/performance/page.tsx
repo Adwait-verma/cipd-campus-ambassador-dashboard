@@ -126,25 +126,6 @@ function formatReach(value: number) {
   return value.toLocaleString();
 }
 
-function ordinal(value: number) {
-  const mod100 = value % 100;
-
-  if (mod100 >= 11 && mod100 <= 13) {
-    return `${value}th`;
-  }
-
-  switch (value % 10) {
-    case 1:
-      return `${value}st`;
-    case 2:
-      return `${value}nd`;
-    case 3:
-      return `${value}rd`;
-    default:
-      return `${value}th`;
-  }
-}
-
 export default function PerformancePage() {
   const [dashboard, setDashboard] =
     useState<DashboardData | null>(null);
@@ -161,14 +142,14 @@ export default function PerformancePage() {
         const stored = sessionStorage.getItem("cipd_user");
 
         if (!stored) {
-          window.location.href = "/login";
+          window.location.replace("/login");
           return;
         }
 
         const user: StoredUser = JSON.parse(stored);
 
         if (user.role !== "AMBASSADOR") {
-          window.location.href = "/login";
+          window.location.replace("/login");
           return;
         }
 

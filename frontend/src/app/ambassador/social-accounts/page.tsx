@@ -35,7 +35,7 @@ export default function SocialAccountsPage() {
     const storedUser = sessionStorage.getItem("cipd_user");
 
     if (!storedUser) {
-      window.location.href = "/login";
+      window.location.replace("/login");
       return;
     }
 
@@ -43,7 +43,7 @@ export default function SocialAccountsPage() {
       const parsedUser: LoggedInUser = JSON.parse(storedUser);
 
       if (parsedUser.role !== "AMBASSADOR") {
-        window.location.href = "/login";
+        window.location.replace("/login");
         return;
       }
 
@@ -51,7 +51,7 @@ export default function SocialAccountsPage() {
       loadAccounts(parsedUser.user_id);
     } catch {
       sessionStorage.removeItem("cipd_user");
-      window.location.href = "/login";
+      window.location.replace("/login");
     }
   }, []);
 

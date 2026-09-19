@@ -2,7 +2,7 @@
 import { authFetch } from "@/lib/api";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type Campaign = {
   campaign_id: number;
@@ -43,7 +43,7 @@ export default function AdminCampaignDetailPage() {
   const [ratingResult, setRatingResult] =
     useState<RatingResponse | null>(null);
 
-  async function loadCampaign() {
+  const loadCampaign = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -66,13 +66,13 @@ export default function AdminCampaignDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [campaignId]);
 
   useEffect(() => {
     const storedUser = sessionStorage.getItem("cipd_user");
 
     if (!storedUser) {
-      window.location.href = "/login";
+      window.location.replace("/login");
       return;
     }
 
@@ -80,16 +80,16 @@ export default function AdminCampaignDetailPage() {
       const user = JSON.parse(storedUser);
 
       if (user.role !== "ADMIN") {
-        window.location.href = "/login";
+        window.location.replace("/login");
         return;
       }
 
       queueMicrotask(() => loadCampaign());
     } catch {
       sessionStorage.removeItem("cipd_user");
-      window.location.href = "/login";
+      window.location.replace("/login");
     }
-  }, [campaignId]);
+  }, [loadCampaign]);
 
   async function calculateRatings() {
     try {

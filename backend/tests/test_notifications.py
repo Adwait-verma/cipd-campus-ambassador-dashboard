@@ -7,7 +7,19 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from notifications import automatic_email_cutoff, campaign_email_body, deliver_pending, email_ready, missing_email_settings, monthly_email_body, queue_campaign_notifications, queue_welcome_email
+from notifications import (
+    automatic_email_cutoff,
+    campaign_email_body,
+    deliver_pending,
+    email_ready,
+    missing_email_settings,
+    monthly_email_body,
+    queue_broadcast,
+    queue_campaign_notifications,
+    queue_password_changed_email,
+    queue_password_reset_email,
+    queue_welcome_email,
+)
 
 
 class Result:
@@ -29,8 +41,13 @@ class Connection:
 
     def execute(self, query, params=None):
         sql = str(query)
+        if "INSERT INTO email_broadcasts" in sql:
+            return SimpleNamespace(scalar_one=lambda: 9)
         if "SELECT user_id, full_name FROM users" in sql:
-            return Result(rows=self.recipients)
+            rows = self.recipients
+            if params and params.get("recipient_user_id") is not None:
+                rows = [row for row in rows if row.user_id == params["recipient_user_id"]]
+            return Result(rows=rows)
         if "INSERT INTO email_outbox" in sql:
             self.messages.append(params)
             return Result(row=(len(self.messages),))
@@ -92,6 +109,26 @@ class NotificationTests(unittest.TestCase):
         self.assertIn("https://example.org/official", body)
         self.assertIn("#CiPD", body)
         self.assertIn("Use the approved artwork.", body)
+
+    def test_broadcast_can_target_one_ambassador(self):
+        recipients = [
+            SimpleNamespace(user_id=1, full_name="One"),
+            SimpleNamespace(user_id=2, full_name="Two"),
+        ]
+        conn = Connection(recipients)
+        self.assertEqual(queue_broadcast(conn, "Subject", "Update", None, 2), 1)
+        self.assertEqual(conn.messages[0]["user_id"], 2)
+
+    def test_password_reset_templates_are_single_request_messages(self):
+        conn = Connection()
+        reset_url = "http://localhost:3000/reset-password?token=test-token"
+        self.assertTrue(queue_password_reset_email(conn, 4, "Student", 11, reset_url))
+        self.assertIn(reset_url, conn.messages[0]["body"])
+        self.assertIn("expires in 30 minutes", conn.messages[0]["body"])
+        self.assertEqual(conn.messages[0]["reset_request_id"], 11)
+
+        self.assertTrue(queue_password_changed_email(conn, 4, "Student", 11))
+        self.assertIn("changed successfully", conn.messages[1]["body"])
 
     def test_monthly_template_shows_verified_metrics_and_normalized_benchmark(self):
         row = {

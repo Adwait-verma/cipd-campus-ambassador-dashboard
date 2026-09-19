@@ -33,7 +33,7 @@ export default function AdminCampaignsPage() {
       const storedUser = sessionStorage.getItem("cipd_user");
 
       if (!storedUser) {
-        window.location.href = "/login";
+        window.location.replace("/login");
         return;
       }
 
@@ -41,7 +41,7 @@ export default function AdminCampaignsPage() {
         const user = JSON.parse(storedUser);
 
         if (user.role !== "ADMIN") {
-          window.location.href = "/login";
+          window.location.replace("/login");
           return;
         }
 

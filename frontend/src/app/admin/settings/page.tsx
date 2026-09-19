@@ -12,6 +12,12 @@ type EmailStatus = {
   counts: { kind: string; status: string; count: number }[];
 };
 
+type AmbassadorRecipient = {
+  user_id: number;
+  full_name: string;
+  email: string;
+};
+
 export default function AdminSettingsPage() {
   const [inviteUrl, setInviteUrl] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
@@ -25,6 +31,8 @@ export default function AdminSettingsPage() {
   const [message, setMessage] = useState("");
   const [subject, setSubject] = useState("");
   const [announcement, setAnnouncement] = useState("");
+  const [recipients, setRecipients] = useState<AmbassadorRecipient[]>([]);
+  const [recipientUserId, setRecipientUserId] = useState("all");
   const [broadcasting, setBroadcasting] = useState(false);
   const [broadcastMessage, setBroadcastMessage] = useState("");
   const [emailStatus, setEmailStatus] = useState<EmailStatus | null>(null);
@@ -50,13 +58,13 @@ export default function AdminSettingsPage() {
     authFetch("http://127.0.0.1:8000/admin/contact")
       .then(async (response) => {
         const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "Could not load admin contact details.");
+        if (!response.ok) throw new Error(data.detail || "Could not load programme contact details.");
         setLoginEmail(data.email || "");
         setContactEmail(data.contact_email || "");
         setContactPhone(data.phone_number || "");
       })
       .catch((error) =>
-        setContactMessage(error instanceof Error ? error.message : "Could not load admin contact details.")
+        setContactMessage(error instanceof Error ? error.message : "Could not load programme contact details.")
       )
       .finally(() => setContactLoading(false));
     authFetch("http://127.0.0.1:8000/admin/notifications/status")
@@ -67,6 +75,15 @@ export default function AdminSettingsPage() {
       })
       .catch((error) =>
         setEmailStatusMessage(error instanceof Error ? error.message : "Could not load email status.")
+      );
+    authFetch("http://127.0.0.1:8000/admin/notifications/recipients")
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not load ambassadors.");
+        setRecipients(data.ambassadors || []);
+      })
+      .catch((error) =>
+        setBroadcastMessage(error instanceof Error ? error.message : "Could not load ambassadors.")
       );
   }, []);
 
@@ -122,26 +139,34 @@ export default function AdminSettingsPage() {
         }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Could not save admin contact details.");
+      if (!response.ok) throw new Error(data.detail || "Could not save programme contact details.");
       setContactEmail(data.contact_email || "");
       setContactPhone(data.phone_number || "");
-      setContactMessage("Admin contact details saved.");
+      setContactMessage("Programme help contact saved and visible to ambassadors.");
     } catch (error) {
-      setContactMessage(error instanceof Error ? error.message : "Could not save admin contact details.");
+      setContactMessage(error instanceof Error ? error.message : "Could not save programme contact details.");
     } finally {
       setSavingContact(false);
     }
   }
 
-  async function sendToAll(event: React.FormEvent) {
+  async function sendAnnouncement(event: React.FormEvent) {
     event.preventDefault();
-    if (!window.confirm("Queue this email for every registered ambassador?")) return;
+    const selected = recipients.find((recipient) => String(recipient.user_id) === recipientUserId);
+    const destination = recipientUserId === "all"
+      ? "every registered ambassador"
+      : selected?.full_name || "the selected ambassador";
+    if (!window.confirm(`Queue this email for ${destination}?`)) return;
     setBroadcasting(true);
     setBroadcastMessage("");
     try {
       const response = await authFetch("http://127.0.0.1:8000/admin/notifications/broadcast", {
         method: "POST",
-        body: JSON.stringify({ subject, message: announcement }),
+        body: JSON.stringify({
+          subject,
+          message: announcement,
+          recipient_user_id: recipientUserId === "all" ? null : Number(recipientUserId),
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Could not queue the email.");
@@ -150,6 +175,7 @@ export default function AdminSettingsPage() {
       );
       setSubject("");
       setAnnouncement("");
+      setRecipientUserId("all");
       await refreshEmailStatus();
     } catch (error) {
       setBroadcastMessage(error instanceof Error ? error.message : "Could not queue the email.");
@@ -187,9 +213,9 @@ export default function AdminSettingsPage() {
       {message && <p role="status" className="mt-5 text-sm text-[#238C89]">{message}</p>}
     </section>
     <section className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
-      <h2 className="text-2xl font-bold text-[#202629]">Admin contact details</h2>
+      <h2 className="text-2xl font-bold text-[#202629]">Ambassador help contact</h2>
       <p className="mt-2 text-sm leading-6 text-gray-600">
-        Add a contact email and phone number for this admin account. These details are visible only in admin settings; they do not change your login email or the email sender.
+        Set the official programme contact shown to every ambassador in their Help section. These details do not change your login email or the automated email sender.
       </p>
       <p className="mt-4 text-sm text-gray-600">
         Login email: <span className="font-medium text-[#202629]">{contactLoading ? "Loading..." : loginEmail}</span>
@@ -246,11 +272,22 @@ export default function AdminSettingsPage() {
       {emailStatusMessage && <p role="status" className="mt-4 text-sm text-gray-700">{emailStatusMessage}</p>}
     </section>
     <section className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
-      <h2 className="text-2xl font-bold text-[#202629]">Email all ambassadors</h2>
+      <h2 className="text-2xl font-bold text-[#202629]">Email ambassadors</h2>
       <p className="mt-2 text-sm leading-6 text-gray-600">
-        Send a one-time announcement to every registered ambassador. The current group invite link is included automatically when configured. Each new campaign already sends its own separate email.
+        Send a one-time announcement to everyone or choose one ambassador by name. The current group invite link is included automatically when configured. Each new campaign already sends its own separate email.
       </p>
-      <form onSubmit={sendToAll} className="mt-6 space-y-4">
+      <form onSubmit={sendAnnouncement} className="mt-6 space-y-4">
+        <label className="block text-sm font-semibold text-[#202629]">
+          Recipients
+          <select value={recipientUserId} onChange={(event) => setRecipientUserId(event.target.value)} className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-4 py-3">
+            <option value="all">All registered ambassadors ({recipients.length})</option>
+            {recipients.map((recipient) => (
+              <option key={recipient.user_id} value={recipient.user_id}>
+                {recipient.full_name} — {recipient.email}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="block text-sm font-semibold text-[#202629]">
           Subject
           <input value={subject} onChange={(event) => setSubject(event.target.value)} required maxLength={200} className="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3" />
@@ -260,7 +297,7 @@ export default function AdminSettingsPage() {
           <textarea value={announcement} onChange={(event) => setAnnouncement(event.target.value)} required maxLength={5000} rows={6} className="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3" />
         </label>
         <button disabled={broadcasting} className="rounded-xl bg-[#202629] px-5 py-3 font-semibold text-white disabled:opacity-50">
-          {broadcasting ? "Queuing..." : "Email all ambassadors"}
+          {broadcasting ? "Queuing..." : recipientUserId === "all" ? "Email all ambassadors" : "Email selected ambassador"}
         </button>
       </form>
       {broadcastMessage && <p role="status" className="mt-5 text-sm text-[#238C89]">{broadcastMessage}</p>}

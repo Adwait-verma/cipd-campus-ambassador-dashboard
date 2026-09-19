@@ -1,6 +1,7 @@
 "use client";
 
 import { authFetch } from "@/lib/api";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type LoggedInUser = {
@@ -80,7 +81,7 @@ export default function AmbassadorDashboard() {
       const storedUser = sessionStorage.getItem("cipd_user");
 
       if (!storedUser) {
-        window.location.href = "/login";
+        window.location.replace("/login");
         return;
       }
 
@@ -88,7 +89,7 @@ export default function AmbassadorDashboard() {
         const user: LoggedInUser = JSON.parse(storedUser);
 
         if (user.role !== "AMBASSADOR") {
-          window.location.href = "/login";
+          window.location.replace("/login");
           return;
         }
 
@@ -387,14 +388,12 @@ export default function AmbassadorDashboard() {
                   </div>
                 )}
 
-                <button
-                  onClick={() =>
-                    (window.location.href = `/ambassador/campaigns/${active_campaign.campaign_id}`)
-                  }
-                  className="mt-5 w-full rounded-xl bg-[#202629] py-3 text-sm font-semibold text-white transition hover:bg-[#343B3E]"
+                <Link
+                  href={`/ambassador/campaigns/${active_campaign.campaign_id}`}
+                  className="mt-5 block w-full rounded-xl bg-[#202629] py-3 text-center text-sm font-semibold text-white transition hover:bg-[#343B3E]"
                 >
                   View Campaign →
-                </button>
+                </Link>
               </>
             ) : (
               <div className="mt-5 rounded-xl bg-[#F8FAFA] p-5">

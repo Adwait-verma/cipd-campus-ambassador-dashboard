@@ -8,13 +8,16 @@ import os
 import re
 import csv
 import io
+import hashlib
+import hmac
+import secrets
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import jwt
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr
@@ -27,8 +30,13 @@ from notifications import (
     email_enabled,
     email_ready,
     missing_email_settings,
+    campaign_email_body,
+    campaign_email_subject,
+    portal_url,
     queue_campaign_notifications,
     queue_broadcast,
+    queue_password_changed_email,
+    queue_password_reset_email,
     queue_welcome_email,
 )
 from scheduler import start_scheduler
@@ -177,6 +185,38 @@ def normalize_phone_number(value: str | None) -> str | None:
     return phone
 
 
+def log_admin_activity(
+    conn,
+    current_user: dict,
+    action: str,
+    summary: str,
+    entity_type: str | None = None,
+    entity_id: int | None = None,
+):
+    conn.execute(text("""
+        INSERT INTO admin_activity_logs (
+            admin_user_id, action, entity_type, entity_id, summary
+        )
+        VALUES (
+            :admin_user_id, :action, :entity_type, :entity_id, :summary
+        )
+    """), {
+        "admin_user_id": current_user["user_id"],
+        "action": action,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "summary": summary,
+    })
+
+
+def privacy_preserving_rate_limit_hash(kind: str, value: str) -> str:
+    return hmac.new(
+        JWT_SECRET.encode("utf-8"),
+        f"{kind}:{value.strip().lower()}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 class CampaignCreateRequest(BaseModel):
     title: str
     description: str | None = None
@@ -217,18 +257,36 @@ class AdminContactRequest(BaseModel):
 class BroadcastRequest(BaseModel):
     subject: str
     message: str
+    recipient_user_id: int | None = None
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetRequest(BaseModel):
+    token: str
+    password: str
 
 
 @app.get("/admin/contact")
 def get_admin_contact(current_user: dict = Depends(require_admin)):
     with engine.connect() as conn:
-        row = conn.execute(text("""
-            SELECT email, contact_email, phone_number
-            FROM users WHERE user_id = :user_id AND role = 'ADMIN'
-        """), {"user_id": current_user["user_id"]}).fetchone()
-    if row is None:
+        login_email = conn.execute(text("""
+            SELECT email FROM users
+            WHERE user_id = :user_id AND role = 'ADMIN'
+        """), {"user_id": current_user["user_id"]}).scalar()
+        contact = conn.execute(text("""
+            SELECT support_contact_email, support_phone_number
+            FROM portal_settings WHERE settings_id = 1
+        """)).fetchone()
+    if login_email is None:
         raise HTTPException(status_code=404, detail="Admin account not found.")
-    return dict(row._mapping)
+    return {
+        "email": login_email,
+        "contact_email": contact.support_contact_email if contact else None,
+        "phone_number": contact.support_phone_number if contact else None,
+    }
 
 
 @app.put("/admin/contact")
@@ -238,19 +296,53 @@ def update_admin_contact(
 ):
     phone_number = normalize_phone_number(data.phone_number)
     with engine.begin() as conn:
-        row = conn.execute(text("""
-            UPDATE users
-            SET contact_email = :contact_email, phone_number = :phone_number
+        login_email = conn.execute(text("""
+            SELECT email FROM users
             WHERE user_id = :user_id AND role = 'ADMIN'
-            RETURNING email, contact_email, phone_number
+        """), {"user_id": current_user["user_id"]}).scalar()
+        if login_email is None:
+            raise HTTPException(status_code=404, detail="Admin account not found.")
+        row = conn.execute(text("""
+            INSERT INTO portal_settings (
+                settings_id, support_contact_email, support_phone_number
+            )
+            VALUES (1, :contact_email, :phone_number)
+            ON CONFLICT (settings_id) DO UPDATE SET
+                support_contact_email = EXCLUDED.support_contact_email,
+                support_phone_number = EXCLUDED.support_phone_number
+            RETURNING support_contact_email, support_phone_number
         """), {
             "contact_email": str(data.contact_email) if data.contact_email else None,
             "phone_number": phone_number,
-            "user_id": current_user["user_id"],
         }).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Admin account not found.")
-    return dict(row._mapping)
+        log_admin_activity(
+            conn,
+            current_user,
+            "HELP_CONTACT_UPDATED",
+            "Updated the ambassador help email and phone number.",
+            "portal_settings",
+            1,
+        )
+    return {
+        "email": login_email,
+        "contact_email": row.support_contact_email,
+        "phone_number": row.support_phone_number,
+    }
+
+
+@app.get("/ambassador/help-contact")
+def get_ambassador_help_contact(
+    current_user: dict = Depends(require_ambassador),
+):
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT support_contact_email, support_phone_number
+            FROM portal_settings WHERE settings_id = 1
+        """)).fetchone()
+    return {
+        "contact_email": row.support_contact_email if row else None,
+        "phone_number": row.support_phone_number if row else None,
+    }
 
 
 @app.get("/admin/settings")
@@ -281,22 +373,19 @@ def update_admin_settings(
     current_user: dict = Depends(require_admin),
 ):
     submitted_url = data.whatsapp_group_invite_url.strip()
-    if not submitted_url:
-        with engine.begin() as conn:
-            conn.execute(text("DELETE FROM portal_settings WHERE settings_id = 1"))
-        return {"whatsapp_group_invite_url": ""}
-
-    parsed = urlparse(submitted_url)
-    if (
-        parsed.scheme != "https"
-        or parsed.netloc.lower() != "chat.whatsapp.com"
-        or not re.fullmatch(r"/[A-Za-z0-9]+/?", parsed.path)
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="Enter a valid https://chat.whatsapp.com/ invite link.",
-        )
-    invite_url = f"https://chat.whatsapp.com/{parsed.path.strip('/')}"
+    invite_url = None
+    if submitted_url:
+        parsed = urlparse(submitted_url)
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc.lower() != "chat.whatsapp.com"
+            or not re.fullmatch(r"/[A-Za-z0-9]+/?", parsed.path)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Enter a valid https://chat.whatsapp.com/ invite link.",
+            )
+        invite_url = f"https://chat.whatsapp.com/{parsed.path.strip('/')}"
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO portal_settings (settings_id, whatsapp_group_invite_url)
@@ -304,7 +393,16 @@ def update_admin_settings(
             ON CONFLICT (settings_id) DO UPDATE
             SET whatsapp_group_invite_url = EXCLUDED.whatsapp_group_invite_url
         """), {"url": invite_url})
-    return {"whatsapp_group_invite_url": invite_url}
+        log_admin_activity(
+            conn,
+            current_user,
+            "WHATSAPP_LINK_UPDATED",
+            "Updated the programme WhatsApp group invite link."
+            if invite_url else "Removed the programme WhatsApp group invite link.",
+            "portal_settings",
+            1,
+        )
+    return {"whatsapp_group_invite_url": invite_url or ""}
 
 
 @app.get("/admin/notifications/status")
@@ -338,7 +436,16 @@ def send_pending_notifications(current_user: dict = Depends(require_admin)):
             status_code=503,
             detail="Email delivery is not configured.",
         )
-    return deliver_pending(engine, include_older=True)
+    result = deliver_pending(engine, include_older=True)
+    with engine.begin() as conn:
+        log_admin_activity(
+            conn,
+            current_user,
+            "PENDING_EMAILS_SENT",
+            f"Triggered pending email delivery: {result['sent']} sent, {result['failed']} failed.",
+            "email_outbox",
+        )
+    return result
 
 
 @app.post("/admin/notifications/broadcast")
@@ -359,10 +466,66 @@ def broadcast_to_ambassadors(
             SELECT whatsapp_group_invite_url FROM portal_settings
             WHERE settings_id = 1
         """)).scalar()
-        queued = queue_broadcast(conn, subject, message, invite_url)
+        queued = queue_broadcast(
+            conn,
+            subject,
+            message,
+            invite_url,
+            data.recipient_user_id,
+        )
+        if data.recipient_user_id is not None and queued == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="The selected ambassador could not be found.",
+            )
+        destination = (
+            f"ambassador user #{data.recipient_user_id}"
+            if data.recipient_user_id is not None
+            else "all registered ambassadors"
+        )
+        log_admin_activity(
+            conn,
+            current_user,
+            "EMAIL_ANNOUNCEMENT_QUEUED",
+            f"Queued '{subject}' for {destination} ({queued} message(s)).",
+            "email_broadcast",
+        )
     if queued and email_ready():
         background_tasks.add_task(deliver_pending, engine)
     return {"queued": queued, "delivery_configured": email_ready()}
+
+
+@app.get("/admin/notifications/recipients")
+def get_notification_recipients(
+    current_user: dict = Depends(require_admin),
+):
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT user_id, full_name, email
+            FROM users
+            WHERE role = 'AMBASSADOR' AND password_hash IS NOT NULL
+            ORDER BY LOWER(full_name), user_id
+        """)).fetchall()
+    return {"ambassadors": [dict(row._mapping) for row in rows]}
+
+
+@app.get("/admin/activity-logs")
+def get_admin_activity_logs(
+    limit: int = 100,
+    current_user: dict = Depends(require_admin),
+):
+    safe_limit = max(1, min(limit, 200))
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT l.activity_id, l.action, l.entity_type, l.entity_id,
+                l.summary, l.created_at, u.full_name AS admin_name,
+                u.email AS admin_email
+            FROM admin_activity_logs l
+            LEFT JOIN users u ON u.user_id = l.admin_user_id
+            ORDER BY l.created_at DESC, l.activity_id DESC
+            LIMIT :limit
+        """), {"limit": safe_limit}).fetchall()
+    return {"activities": [dict(row._mapping) for row in rows]}
 
 
 @app.get("/health")
@@ -583,6 +746,145 @@ def login(data: LoginRequest, background_tasks: BackgroundTasks):
             status_code=500,
             detail=f"Login failed: {e}",
         )
+
+
+@app.post("/forgot-password")
+def forgot_password(
+    data: ForgotPasswordRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    generic_message = (
+        "If an account exists for that email, a password-reset link has been sent."
+    )
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    email_limit_hash = privacy_preserving_rate_limit_hash(
+        "email",
+        str(data.email),
+    )
+    client_ip = request.client.host if request.client else "unknown"
+    ip_limit_hash = privacy_preserving_rate_limit_hash("ip", client_ip)
+    queued = False
+    with engine.begin() as conn:
+        conn.execute(text("""
+            DELETE FROM password_reset_attempts
+            WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '24 hours'
+        """))
+        limits = conn.execute(text("""
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE email_hash = :email_hash
+                      AND created_at > CURRENT_TIMESTAMP - INTERVAL '15 minutes'
+                )::INT AS email_attempts,
+                COUNT(*) FILTER (
+                    WHERE ip_hash = :ip_hash
+                      AND created_at > CURRENT_TIMESTAMP - INTERVAL '1 hour'
+                )::INT AS ip_attempts
+            FROM password_reset_attempts
+        """), {
+            "email_hash": email_limit_hash,
+            "ip_hash": ip_limit_hash,
+        }).fetchone()
+        if limits.email_attempts >= 3 or limits.ip_attempts >= 20:
+            return {"message": generic_message}
+        conn.execute(text("""
+            INSERT INTO password_reset_attempts (email_hash, ip_hash)
+            VALUES (:email_hash, :ip_hash)
+        """), {
+            "email_hash": email_limit_hash,
+            "ip_hash": ip_limit_hash,
+        })
+        user = conn.execute(text("""
+            SELECT user_id, full_name
+            FROM users
+            WHERE LOWER(email) = LOWER(:email)
+              AND password_hash IS NOT NULL
+        """), {"email": str(data.email)}).fetchone()
+        if user:
+            recent_request = conn.execute(text("""
+                SELECT 1 FROM password_reset_requests
+                WHERE user_id = :user_id
+                  AND created_at > CURRENT_TIMESTAMP - INTERVAL '1 minute'
+                LIMIT 1
+            """), {"user_id": user.user_id}).scalar()
+            if not recent_request:
+                reset_request_id = conn.execute(text("""
+                    INSERT INTO password_reset_requests (
+                        user_id, token_hash, expires_at
+                    )
+                    VALUES (
+                        :user_id, :token_hash,
+                        CURRENT_TIMESTAMP + INTERVAL '30 minutes'
+                    )
+                    RETURNING reset_request_id
+                """), {
+                    "user_id": user.user_id,
+                    "token_hash": token_hash,
+                }).scalar_one()
+                reset_url = f"{portal_url()}/reset-password?token={raw_token}"
+                queued = queue_password_reset_email(
+                    conn,
+                    user.user_id,
+                    user.full_name,
+                    reset_request_id,
+                    reset_url,
+                )
+    if queued and email_ready():
+        background_tasks.add_task(deliver_pending, engine)
+    return {"message": generic_message}
+
+
+@app.post("/reset-password")
+def reset_password(
+    data: PasswordResetRequest,
+    background_tasks: BackgroundTasks,
+):
+    if len(data.password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at least 6 characters.",
+        )
+    token_hash = hashlib.sha256(data.token.encode("utf-8")).hexdigest()
+    new_password_hash = password_hash.hash(data.password)
+    with engine.begin() as conn:
+        request_row = conn.execute(text("""
+            UPDATE password_reset_requests
+            SET used_at = CURRENT_TIMESTAMP
+            WHERE token_hash = :token_hash
+              AND used_at IS NULL
+              AND expires_at > CURRENT_TIMESTAMP
+            RETURNING reset_request_id, user_id
+        """), {"token_hash": token_hash}).fetchone()
+        if not request_row:
+            raise HTTPException(
+                status_code=400,
+                detail="This password-reset link is invalid or has expired.",
+            )
+        user = conn.execute(text("""
+            UPDATE users SET password_hash = :password_hash
+            WHERE user_id = :user_id
+            RETURNING full_name
+        """), {
+            "password_hash": new_password_hash,
+            "user_id": request_row.user_id,
+        }).fetchone()
+        conn.execute(text("""
+            UPDATE password_reset_requests
+            SET used_at = COALESCE(used_at, CURRENT_TIMESTAMP)
+            WHERE user_id = :user_id AND used_at IS NULL
+        """), {"user_id": request_row.user_id})
+        confirmation_queued = queue_password_changed_email(
+            conn,
+            request_row.user_id,
+            user.full_name,
+            request_row.reset_request_id,
+        )
+    if confirmation_queued and email_ready():
+        background_tasks.add_task(deliver_pending, engine)
+    return {"message": "Password changed successfully. You can now sign in."}
+
+
 @app.put("/ambassador/profile/{user_id}")
 def update_ambassador_profile(
     user_id: int,
@@ -1884,6 +2186,14 @@ def export_admin_ambassadors_csv(
             item["graduation_year"], item["status"],
             csv_safe(item["social_accounts"]), item["created_at"].isoformat(),
         ])
+    with engine.begin() as conn:
+        log_admin_activity(
+            conn,
+            current_user,
+            "AMBASSADOR_CSV_EXPORTED",
+            f"Exported {len(rows)} ambassador record(s) to CSV.",
+            "ambassador",
+        )
     return Response(
         content="\ufeff" + output.getvalue(),
         media_type="text/csv; charset=utf-8",
@@ -2343,6 +2653,14 @@ def verify_campaign_post(
                     "saves_count": data.saves_count,
                 },
             ).fetchone()
+            log_admin_activity(
+                conn,
+                current_user,
+                "CAMPAIGN_POST_VERIFIED",
+                f"Verified post #{post_id} and stored metric snapshot #{snapshot.snapshot_id}.",
+                "campaign_post",
+                post_id,
+            )
 
         return {
             "message":
@@ -2777,6 +3095,15 @@ def calculate_campaign_ratings(
                     },
                 )
 
+            log_admin_activity(
+                conn,
+                current_user,
+                "CAMPAIGN_RATINGS_CALCULATED",
+                f"Recalculated ratings for '{campaign.title}' ({len(calculated)} ambassador(s)).",
+                "campaign",
+                campaign_id,
+            )
+
         return {
             "message":
                 "Campaign ratings calculated successfully.",
@@ -2897,6 +3224,47 @@ def get_admin_campaigns(
             status_code=500,
             detail=f"Failed to load campaigns: {e}"
         )
+@app.post("/admin/campaigns/preview")
+def preview_admin_campaign(
+    data: CampaignCreateRequest,
+    current_user: dict = Depends(require_admin),
+):
+    title = data.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Campaign title is required.")
+    if data.end_date < data.start_date:
+        raise HTTPException(
+            status_code=400,
+            detail="End date cannot be before start date.",
+        )
+    campaign = {
+        "title": title,
+        "description": data.description.strip() if data.description else None,
+        "mandatory_hashtag": (
+            data.mandatory_hashtag.strip()
+            if data.mandatory_hashtag
+            else None
+        ),
+        "target_url": data.target_url.strip() if data.target_url else None,
+        "start_date": data.start_date,
+        "end_date": data.end_date,
+    }
+    with engine.connect() as conn:
+        recipient_count = conn.execute(text("""
+            SELECT COUNT(*)::INT FROM users
+            WHERE role = 'AMBASSADOR' AND password_hash IS NOT NULL
+        """)).scalar_one()
+    return {
+        "subject": campaign_email_subject(campaign),
+        "body": campaign_email_body(
+            "Ambassador",
+            campaign,
+            f"{portal_url()}/ambassador/campaigns/[campaign ID]",
+        ),
+        "recipient_count": recipient_count,
+    }
+
+
 @app.post("/admin/campaigns")
 def create_admin_campaign(
     data: CampaignCreateRequest,
@@ -2975,6 +3343,14 @@ def create_admin_campaign(
             queued_emails = queue_campaign_notifications(
                 conn,
                 dict(campaign._mapping),
+            )
+            log_admin_activity(
+                conn,
+                current_user,
+                "CAMPAIGN_PUBLISHED",
+                f"Published '{campaign.title}' and queued {queued_emails} ambassador email(s).",
+                "campaign",
+                campaign.campaign_id,
             )
 
         if email_ready() and queued_emails:

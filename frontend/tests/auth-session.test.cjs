@@ -16,9 +16,13 @@ function openWindow(token, storage = new Map()) {
     storage.set("cipd_user", JSON.stringify({ role: token }));
   }
   const requests = [];
+  const location = {
+    href: "/",
+    replace(value) { this.href = value; },
+  };
   const context = vm.createContext({
     exports: {}, Headers, FormData,
-    window: { location: { href: "/" } },
+    window: { location },
     sessionStorage: {
       getItem: (key) => storage.get(key) ?? null,
       removeItem: (key) => storage.delete(key),

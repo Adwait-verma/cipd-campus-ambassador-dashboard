@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"ambassador" | "admin">("ambassador");
@@ -61,9 +63,9 @@ export default function LoginPage() {
       localStorage.removeItem("cipd_token");
 
       if (data.user.role === "ADMIN") {
-        window.location.href = "/admin";
+        router.replace("/admin");
       } else {
-        window.location.href = "/ambassador/dashboard";
+        router.replace("/ambassador/dashboard");
       }
     } catch {
       setMessage(
@@ -223,6 +225,11 @@ export default function LoginPage() {
                   placeholder="Enter your password"
                   className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-[#202629] outline-none transition placeholder:font-medium placeholder:text-gray-500 focus:border-[#54B9B4] focus:ring-1 focus:ring-[#54B9B4]"
                 />
+                <div className="mt-2 text-right">
+                  <Link href="/forgot-password" className="text-sm font-semibold text-[#238C89] hover:underline">
+                    Forgot password?
+                  </Link>
+                </div>
               </div>
 
               <button

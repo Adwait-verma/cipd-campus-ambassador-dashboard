@@ -8,7 +8,13 @@ export default function CreateCampaignPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState<{
+    subject: string;
+    body: string;
+    recipient_count: number;
+  } | null>(null);
 
   const [form, setForm] = useState({
     title: "",
@@ -29,31 +35,8 @@ export default function CreateCampaignPage() {
     }));
   }
 
-  async function handleCreate() {
-    setError("");
-
-    if (!form.title.trim()) {
-      setError("Campaign title is required.");
-      return;
-    }
-
-    if (!form.startDate || !form.endDate) {
-      setError("Start date and end date are required.");
-      return;
-    }
-
-    if (form.endDate < form.startDate) {
-      setError("End date cannot be before start date.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-const response = await authFetch(
-  "http://127.0.0.1:8000/admin/campaigns",
-  {
-    method: "POST",
-    body: JSON.stringify({
+  function campaignPayload() {
+    return {
       title: form.title.trim(),
       description: form.description.trim() || null,
       mandatory_hashtag: form.hashtag.trim() || null,
@@ -61,32 +44,72 @@ const response = await authFetch(
       start_date: form.startDate,
       end_date: form.endDate,
       is_active: form.status === "ACTIVE",
-    }),
+    };
   }
-);
+
+  function validateForm() {
+    setError("");
+    if (!form.title.trim()) {
+      setError("Campaign title is required.");
+      return false;
+    }
+    if (!form.startDate || !form.endDate) {
+      setError("Start date and end date are required.");
+      return false;
+    }
+    if (form.endDate < form.startDate) {
+      setError("End date cannot be before start date.");
+      return false;
+    }
+    return true;
+  }
+
+  async function handlePreview() {
+    if (!validateForm()) return;
+    try {
+      setPreviewLoading(true);
+      const response = await authFetch(
+        "http://127.0.0.1:8000/admin/campaigns/preview",
+        {
+          method: "POST",
+          body: JSON.stringify(campaignPayload()),
+        }
+      );
       const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(
-          data.detail || "Failed to create campaign."
-        );
+        throw new Error(data.detail || "Could not create the email preview.");
       }
+      setPreview(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create the email preview.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
 
+  async function handlePublish() {
+    if (!preview || !validateForm()) return;
+    try {
+      setLoading(true);
+      const response = await authFetch(
+        "http://127.0.0.1:8000/admin/campaigns",
+        {
+          method: "POST",
+          body: JSON.stringify(campaignPayload()),
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || "Failed to publish campaign.");
+      }
       const campaignId = data.campaign?.campaign_id;
-
       if (!campaignId) {
-        throw new Error(
-          "Campaign was created, but no campaign ID was returned."
-        );
+        throw new Error("Campaign was published, but no campaign ID was returned.");
       }
-
       router.push(`/admin/campaigns/${campaignId}`);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to create campaign."
-      );
+      setError(err instanceof Error ? err.message : "Failed to publish campaign.");
+      setPreview(null);
     } finally {
       setLoading(false);
     }
@@ -243,11 +266,11 @@ const response = await authFetch(
         <div className="mt-8 flex flex-wrap items-center gap-4">
           <button
             type="button"
-            onClick={handleCreate}
-            disabled={loading}
+            onClick={handlePreview}
+            disabled={previewLoading}
             className="rounded-xl bg-[#202629] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#343B3E] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {loading ? "Creating..." : "Create campaign"}
+            {previewLoading ? "Preparing preview..." : "Preview campaign email"}
           </button>
 
           <Link
@@ -265,11 +288,42 @@ const response = await authFetch(
         </p>
 
         <p className="mt-2 text-sm leading-6 text-gray-500">
-          Creating a campaign now saves it to PostgreSQL through the FastAPI
-          backend. Active campaigns are available to eligible Campus
-          Ambassadors during their configured campaign dates.
+          Nothing is saved or emailed when you open the preview. The campaign is
+          listed in PostgreSQL and one notification is queued for every
+          registered ambassador only after you confirm publication.
         </p>
       </section>
+
+      {preview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="campaign-preview-title">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-7 shadow-xl">
+            <p className="text-sm font-semibold uppercase tracking-wider text-[#9383D8]">
+              Final confirmation
+            </p>
+            <h2 id="campaign-preview-title" className="mt-2 text-2xl font-bold text-[#202629]">
+              Preview campaign and ambassador email
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-gray-600">
+              Publishing will list this campaign and queue this email for {preview.recipient_count} registered ambassador{preview.recipient_count === 1 ? "" : "s"}. The greeting will use each ambassador&apos;s name, and the final campaign link will contain the new campaign ID.
+            </p>
+            <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">Subject</p>
+              <p className="mt-2 font-semibold text-[#202629]">{preview.subject}</p>
+              <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-gray-600">Message</p>
+              <pre className="mt-2 whitespace-pre-wrap font-sans text-sm leading-6 text-gray-700">{preview.body}</pre>
+            </div>
+            {error && <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-medium text-red-700">{error}</p>}
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button type="button" onClick={handlePublish} disabled={loading} className="rounded-xl bg-[#202629] px-5 py-3 text-sm font-semibold text-white disabled:opacity-60">
+                {loading ? "Publishing..." : "Publish campaign & send email"}
+              </button>
+              <button type="button" onClick={() => { setPreview(null); setError(""); }} disabled={loading} className="rounded-xl border border-gray-300 px-5 py-3 text-sm font-semibold text-gray-700">
+                Edit campaign details
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

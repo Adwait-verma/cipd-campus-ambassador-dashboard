@@ -31,6 +31,11 @@ const navigation = [
     icon: "↗",
   },
   {
+    name: "Activity Log",
+    href: "/admin/activity",
+    icon: "≡",
+  },
+  {
     name: "Settings",
     href: "/admin/settings",
     icon: "⚙",

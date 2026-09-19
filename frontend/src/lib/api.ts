@@ -7,7 +7,7 @@ export async function authFetch(
 
   if (!token) {
     sessionStorage.removeItem("cipd_user");
-    window.location.href = "/login";
+    window.location.replace("/login");
     throw new Error("No authentication token.");
   }
 
@@ -31,7 +31,7 @@ export async function authFetch(
   if (response.status === 401) {
     sessionStorage.removeItem("cipd_user");
     sessionStorage.removeItem("cipd_token");
-    window.location.href = "/login";
+    window.location.replace("/login");
   }
 
   return response;

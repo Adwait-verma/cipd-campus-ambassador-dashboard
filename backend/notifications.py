@@ -90,7 +90,13 @@ def queue_welcome_email(conn, user_id: int, full_name: str, invite_url: str | No
     return result is not None
 
 
-def queue_broadcast(conn, subject: str, message: str, invite_url: str | None) -> int:
+def queue_broadcast(
+    conn,
+    subject: str,
+    message: str,
+    invite_url: str | None,
+    recipient_user_id: int | None = None,
+) -> int:
     broadcast_id = conn.execute(text("""
         INSERT INTO email_broadcasts (subject, body)
         VALUES (:subject, :body)
@@ -99,8 +105,9 @@ def queue_broadcast(conn, subject: str, message: str, invite_url: str | None) ->
     recipients = conn.execute(text("""
         SELECT user_id, full_name FROM users
         WHERE role = 'AMBASSADOR' AND password_hash IS NOT NULL
+          AND (:recipient_user_id IS NULL OR user_id = :recipient_user_id)
         ORDER BY user_id
-    """)).fetchall()
+    """), {"recipient_user_id": recipient_user_id}).fetchall()
     for recipient in recipients:
         body = f"Hello {recipient.full_name},\n\n{message}\n\n"
         if invite_url:
@@ -118,10 +125,21 @@ def queue_broadcast(conn, subject: str, message: str, invite_url: str | None) ->
     return len(recipients)
 
 
-def campaign_email_body(full_name: str, campaign: dict) -> str:
+def campaign_email_subject(campaign: dict) -> str:
+    return f"New CiPD campaign: {campaign['title']}"
+
+
+def campaign_email_body(
+    full_name: str,
+    campaign: dict,
+    campaign_page_url: str | None = None,
+) -> str:
     description = campaign.get("description") or "Read the full campaign brief in the portal."
     official_url = campaign.get("target_url") or "See the campaign page for official content."
     hashtag = campaign.get("mandatory_hashtag") or "None specified"
+    page_url = campaign_page_url or (
+        f"{portal_url()}/ambassador/campaigns/{campaign['campaign_id']}"
+    )
     return (
         f"Hello {full_name},\n\n"
         f"A new CiPD campaign has been listed: {campaign['title']}\n\n"
@@ -136,7 +154,7 @@ def campaign_email_body(full_name: str, campaign: dict) -> str:
         "following the guidelines and required hashtag.\n"
         "3. Submit the direct URL of your published post on the campaign page.\n"
         "4. The admin verifies post metrics and runs the campaign rating calculation.\n\n"
-        f"Open campaign: {portal_url()}/ambassador/campaigns/{campaign['campaign_id']}\n\n"
+        f"Open campaign: {page_url}\n\n"
         "CiPD Campus Ambassador Programme\n"
         "You received this announcement because you registered as an ambassador."
     )
@@ -148,7 +166,7 @@ def queue_campaign_notifications(conn, campaign: dict) -> int:
         WHERE role = 'AMBASSADOR' AND password_hash IS NOT NULL
         ORDER BY user_id
     """)).fetchall()
-    subject = f"New CiPD campaign: {campaign['title']}"
+    subject = campaign_email_subject(campaign)
     queued = 0
     for recipient in recipients:
         result = conn.execute(text("""
@@ -164,6 +182,71 @@ def queue_campaign_notifications(conn, campaign: dict) -> int:
         }).fetchone()
         queued += int(result is not None)
     return queued
+
+
+def queue_password_reset_email(
+    conn,
+    user_id: int,
+    full_name: str,
+    reset_request_id: int,
+    reset_url: str,
+) -> bool:
+    body = (
+        f"Hello {full_name},\n\n"
+        "We received a request to reset your CiPD portal password.\n\n"
+        f"Reset your password: {reset_url}\n\n"
+        "This link expires in 30 minutes and can be used only once. If you did "
+        "not request this change, you can ignore this email. Your existing "
+        "password remains unchanged.\n\n"
+        "CiPD Campus Ambassador Programme"
+    )
+    result = conn.execute(text("""
+        INSERT INTO email_outbox (
+            user_id, kind, reset_request_id, subject, body
+        )
+        VALUES (
+            :user_id, 'PASSWORD_RESET', :reset_request_id, :subject, :body
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING message_id
+    """), {
+        "user_id": user_id,
+        "reset_request_id": reset_request_id,
+        "subject": "Reset your CiPD portal password",
+        "body": body,
+    }).fetchone()
+    return result is not None
+
+
+def queue_password_changed_email(
+    conn,
+    user_id: int,
+    full_name: str,
+    reset_request_id: int,
+) -> bool:
+    body = (
+        f"Hello {full_name},\n\n"
+        "Your CiPD portal password was changed successfully. If you did not "
+        "make this change, contact the programme administrator immediately.\n\n"
+        f"Sign in: {portal_url()}/login\n\n"
+        "CiPD Campus Ambassador Programme"
+    )
+    result = conn.execute(text("""
+        INSERT INTO email_outbox (
+            user_id, kind, reset_request_id, subject, body
+        )
+        VALUES (
+            :user_id, 'PASSWORD_CHANGED', :reset_request_id, :subject, :body
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING message_id
+    """), {
+        "user_id": user_id,
+        "reset_request_id": reset_request_id,
+        "subject": "Your CiPD portal password was changed",
+        "body": body,
+    }).fetchone()
+    return result is not None
 
 
 def monthly_metrics(conn, month: date) -> list[dict]:

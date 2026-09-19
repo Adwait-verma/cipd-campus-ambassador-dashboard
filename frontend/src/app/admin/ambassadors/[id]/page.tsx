@@ -2,7 +2,7 @@
 import { authFetch } from "@/lib/api";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type AmbassadorStatus = "ACTIVE" | "PENDING" | "SUSPENDED";
 
@@ -120,30 +120,7 @@ export default function AmbassadorDetailPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
-  useEffect(() => {
-    const storedUser = sessionStorage.getItem("cipd_user");
-
-    if (!storedUser) {
-      window.location.href = "/login";
-      return;
-    }
-
-    try {
-      const user = JSON.parse(storedUser);
-
-      if (user.role !== "ADMIN") {
-        window.location.href = "/login";
-        return;
-      }
-
-      loadAmbassador();
-    } catch {
-      sessionStorage.removeItem("cipd_user");
-      window.location.href = "/login";
-    }
-  }, [ambassadorId]);
-
-  async function loadAmbassador() {
+  const loadAmbassador = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -165,7 +142,30 @@ export default function AmbassadorDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [ambassadorId]);
+
+  useEffect(() => {
+    const storedUser = sessionStorage.getItem("cipd_user");
+
+    if (!storedUser) {
+      window.location.replace("/login");
+      return;
+    }
+
+    try {
+      const user = JSON.parse(storedUser);
+
+      if (user.role !== "ADMIN") {
+        window.location.replace("/login");
+        return;
+      }
+
+      queueMicrotask(() => loadAmbassador());
+    } catch {
+      sessionStorage.removeItem("cipd_user");
+      window.location.replace("/login");
+    }
+  }, [loadAmbassador]);
 
   function openMetricForm(post: Submission) {
     setSelectedPostId(post.post_id);

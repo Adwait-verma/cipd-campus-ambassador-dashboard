@@ -46,7 +46,7 @@ export default function AdminOverviewPage() {
         sessionStorage.getItem("cipd_user");
 
       if (!storedUser) {
-        window.location.href = "/login";
+        window.location.replace("/login");
         return;
       }
 
@@ -54,7 +54,7 @@ export default function AdminOverviewPage() {
         const user = JSON.parse(storedUser);
 
         if (user.role !== "ADMIN") {
-          window.location.href = "/login";
+          window.location.replace("/login");
           return;
         }
 
