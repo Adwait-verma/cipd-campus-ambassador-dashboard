@@ -1,124 +1,35 @@
 "use client";
+
 import { authFetch } from "@/lib/api";
-import Link from "next/link";
-import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-type AmbassadorStatus = "ACTIVE" | "PENDING" | "SUSPENDED";
+type Platform = "INSTAGRAM" | "LINKEDIN";
 
-type Ambassador = {
-  ambassador_id: number;
+type LoggedInUser = {
   user_id: number;
   full_name: string;
   email: string;
-  college_name: string;
-  graduation_year: number;
-  status: AmbassadorStatus;
+  role: string;
 };
 
 type SocialAccount = {
   account_id: number;
   platform: string;
+  platform_user_id: string;
   profile_handle: string;
   follower_count: number;
   verified: boolean;
   updated_at: string;
 };
 
-type Rating = {
-  normalized_score: number;
-  percentile_rank: number;
-  star_rating: number;
-  campaign_id: number;
-  calculated_at: string;
-} | null;
+const supportedPlatforms: Platform[] = ["INSTAGRAM", "LINKEDIN"];
 
-type Ranking = {
-  current_rank: number | null;
-  total_ranked: number;
-};
-
-type Submission = {
-  post_id: number;
-  campaign_id: number;
-  campaign_title: string;
-  platform: string;
-  post_url: string;
-  platform_post_id: string;
-  published_at: string | null;
-  is_verified: boolean;
-  snapshot_id: number | null;
-  fetched_at: string | null;
-  reach_count: number;
-  likes_count: number;
-  comments_count: number;
-  shares_count: number;
-  saves_count: number;
-  views_impressions: number;
-};
-
-type AmbassadorDetailResponse = {
-  ambassador: Ambassador;
-  social_accounts: SocialAccount[];
-  metrics: {
-    total_reach: number;
-    total_engagements: number;
-    engagement_rate: number;
-  };
-  rating: Rating;
-  ranking: Ranking;
-  submissions: Submission[];
-};
-
-type MetricForm = {
-  reach_count: string;
-  likes_count: string;
-  comments_count: string;
-  shares_count: string;
-  saves_count: string;
-  views_impressions: string;
-};
-
-function Stars({ count }: { count: number | null }) {
-  if (!count) {
-    return <span className="text-sm text-gray-400">Not rated</span>;
-  }
-
-  return (
-    <span className="text-xl tracking-wider text-[#F0C568]">
-      {"★".repeat(count)}
-      <span className="text-gray-200">
-        {"★".repeat(5 - count)}
-      </span>
-    </span>
-  );
-}
-
-export default function AmbassadorDetailPage() {
-  const params = useParams();
-  const ambassadorId = Number(params.id);
-
-  const [data, setData] =
-    useState<AmbassadorDetailResponse | null>(null);
-
+export default function SocialAccountsPage() {
+  const [user, setUser] = useState<LoggedInUser | null>(null);
+  const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const [selectedPostId, setSelectedPostId] =
-    useState<number | null>(null);
-
-  const [metricForm, setMetricForm] = useState<MetricForm>({
-    reach_count: "0",
-    likes_count: "0",
-    comments_count: "0",
-    shares_count: "0",
-    saves_count: "0",
-    views_impressions: "0",
-  });
-
-  const [saving, setSaving] = useState(false);
+  const [workingPlatform, setWorkingPlatform] = useState<string | null>(null);
   const [message, setMessage] = useState("");
-  const [syncingPostId, setSyncingPostId] = useState<number | null>(null);
 
   useEffect(() => {
     const storedUser = localStorage.getItem("cipd_user");
@@ -129,37 +40,54 @@ export default function AmbassadorDetailPage() {
     }
 
     try {
-      const user = JSON.parse(storedUser);
+      const parsedUser: LoggedInUser = JSON.parse(storedUser);
 
-      if (user.role !== "ADMIN") {
+      if (parsedUser.role !== "AMBASSADOR") {
         window.location.href = "/login";
         return;
       }
 
-      loadAmbassador();
+      queueMicrotask(() => setUser(parsedUser));
+      loadAccounts(parsedUser.user_id);
     } catch {
       localStorage.removeItem("cipd_user");
       window.location.href = "/login";
     }
-  }, [ambassadorId]);
 
-  async function loadAmbassador() {
+    const params = new URLSearchParams(window.location.search);
+    const instagramStatus = params.get("instagram");
+
+    if (instagramStatus === "connected") {
+      queueMicrotask(() =>
+        setMessage("Instagram connected successfully.")
+      );
+    } else if (instagramStatus === "error") {
+      queueMicrotask(() =>
+        setMessage(
+          params.get("message") || "Failed to connect Instagram."
+        )
+      );
+    }
+  }, []);
+
+  async function loadAccounts(userId: number) {
     try {
       setLoading(true);
 
-     const response = await authFetch(
-  `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/ambassadors/${ambassadorId}`
-);
-      const result = await response.json();
+      const response = await authFetch(
+        `http://localhost:8000/ambassador/social-accounts/${userId}`
+      );
+
+      const data = await response.json();
 
       if (!response.ok) {
-        setError(result.detail || "Failed to load ambassador.");
+        setMessage(data.detail || "Failed to load social accounts.");
         return;
       }
 
-      setData(result);
+      setAccounts(data.accounts);
     } catch {
-      setError(
+      setMessage(
         "Could not connect to the backend. Make sure FastAPI is running."
       );
     } finally {
@@ -167,598 +95,418 @@ export default function AmbassadorDetailPage() {
     }
   }
 
-  function openMetricForm(post: Submission) {
-    setSelectedPostId(post.post_id);
-
-    setMetricForm({
-      reach_count: String(post.reach_count ?? 0),
-      likes_count: String(post.likes_count ?? 0),
-      comments_count: String(post.comments_count ?? 0),
-      shares_count: String(post.shares_count ?? 0),
-      saves_count: String(post.saves_count ?? 0),
-      views_impressions: String(post.views_impressions ?? 0),
-    });
-
-    setMessage("");
+  function getAccount(platform: Platform) {
+    return accounts.find((account) => account.platform === platform);
   }
 
-  async function verifyAndSaveMetrics(postId: number) {
-    try {
-      setSaving(true);
-      setMessage("");
-const response = await authFetch(
-  `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/campaign-posts/${postId}/verify`,
-  {
-    method: "POST",
-    body: JSON.stringify({
-      reach_count: Number(metricForm.reach_count),
-      likes_count: Number(metricForm.likes_count),
-      comments_count: Number(metricForm.comments_count),
-      shares_count: Number(metricForm.shares_count),
-      saves_count: Number(metricForm.saves_count),
-      views_impressions: Number(metricForm.views_impressions),
-    }),
-  }
-);
+  async function connectAccount(platform: Platform) {
+    if (!user) return;
 
-      const result = await response.json();
+    /*
+      TEMPORARY MANUAL PROTOTYPE CONNECTION
 
-      if (!response.ok) {
-        setMessage(result.detail || "Failed to save metrics.");
-        return;
-      }
+      We are not using real Instagram/LinkedIn OAuth yet.
+      This creates a test verified connection in PostgreSQL so we can
+      complete and test the application workflow.
 
-      setMessage("Post verified and metrics saved successfully.");
-      setSelectedPostId(null);
+      Later this function will be replaced with OAuth.
+    */
 
-      await loadAmbassador();
-    } catch {
-      setMessage("Could not connect to the backend.");
-    } finally {
-      setSaving(false);
+    const platformName =
+      platform === "INSTAGRAM" ? "Instagram" : "LinkedIn";
+
+    const handle = window.prompt(
+      `Enter your ${platformName} username/profile handle:`
+    );
+
+    if (!handle || !handle.trim()) {
+      return;
     }
-  }
 
-  async function syncInstagramMetrics(postId: number) {
     try {
-      setSyncingPostId(postId);
+      setWorkingPlatform(platform);
       setMessage("");
 
       const response = await authFetch(
-        `https://scaling-carnival-7v7pjrpwwxx92pg54-8000.app.github.dev/admin/campaign-posts/${postId}/sync-instagram-metrics`,
-        { method: "POST" }
+        "http://localhost:8000/ambassador/social-accounts/connect",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            user_id: user.user_id,
+            platform,
+            platform_user_id: `${platform.toLowerCase()}_${user.user_id}`,
+            profile_handle: handle.trim(),
+            follower_count: 0,
+          }),
+        }
       );
 
-      const result = await response.json();
+      const data = await response.json();
 
       if (!response.ok) {
-        setMessage(result.detail || "Failed to sync Instagram metrics.");
+        setMessage(data.detail || "Failed to connect social account.");
         return;
       }
 
-      setMessage("Metrics pulled from Instagram and post verified.");
-      setSelectedPostId(null);
+      setMessage(
+        `${platformName} connected successfully. Ambassador status: ${data.ambassador_status}.`
+      );
 
-      await loadAmbassador();
+      await loadAccounts(user.user_id);
     } catch {
       setMessage("Could not connect to the backend.");
     } finally {
-      setSyncingPostId(null);
+      setWorkingPlatform(null);
     }
   }
 
-  function formatNumber(value: number) {
-    return Number(value || 0).toLocaleString();
+  async function connectInstagram() {
+    if (!user) return;
+
+    try {
+      setWorkingPlatform("INSTAGRAM");
+      setMessage("");
+
+      const response = await authFetch(
+        "http://localhost:8000/ambassador/social-accounts/instagram/authorize"
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setMessage(
+          data.detail || "Failed to start Instagram connection."
+        );
+        setWorkingPlatform(null);
+        return;
+      }
+
+      window.location.href = data.authorize_url;
+    } catch {
+      setMessage("Could not connect to the backend.");
+      setWorkingPlatform(null);
+    }
   }
 
-  function formatDate(value: string | null) {
-    if (!value) {
-      return "—";
+  async function disconnectAccount(platform: Platform) {
+    if (!user) return;
+
+    const platformName =
+      platform === "INSTAGRAM" ? "Instagram" : "LinkedIn";
+
+    const confirmed = window.confirm(
+      `Disconnect your ${platformName} account?`
+    );
+
+    if (!confirmed) {
+      return;
     }
 
-    return new Date(value).toLocaleString();
+    try {
+      setWorkingPlatform(platform);
+      setMessage("");
+
+      const response = await authFetch(
+        `http://localhost:8000/ambassador/social-accounts/${user.user_id}/${platform}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setMessage(data.detail || "Failed to disconnect social account.");
+        return;
+      }
+
+      setMessage(
+        `${platformName} disconnected. Ambassador status: ${data.ambassador_status}.`
+      );
+
+      await loadAccounts(user.user_id);
+    } catch {
+      setMessage("Could not connect to the backend.");
+    } finally {
+      setWorkingPlatform(null);
+    }
   }
+
+  const hasVerifiedAccount = accounts.some(
+    (account) => account.verified
+  );
 
   if (loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="text-sm text-gray-500">
-          Loading ambassador...
+          Loading social accounts...
         </p>
       </div>
     );
   }
-
-  if (error || !data) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-6">
-          <p className="font-semibold text-red-700">
-            Could not load ambassador
-          </p>
-
-          <p className="mt-2 text-sm text-red-600">
-            {error || "Ambassador not found."}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const {
-    ambassador,
-    social_accounts,
-    metrics,
-    rating,
-    ranking,
-    submissions,
-  } = data;
-
-  const initials = ambassador.full_name
-    .split(" ")
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-
-  const isActive = ambassador.status === "ACTIVE";
 
   return (
     <div className="mx-auto max-w-[1500px]">
-      {/* Back */}
-      <div className="mb-6">
-        <Link
-          href="/admin/ambassadors"
-          className="text-sm font-semibold text-[#9383D8]"
-        >
-          ← Back to ambassadors
-        </Link>
-      </div>
-
       {/* Header */}
-      <section className="mb-8 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex items-center gap-5">
-          <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[#202629] text-xl font-bold text-white">
-            {initials}
-          </div>
-
-          <div>
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-[#9383D8]">
-              Ambassador Profile
-            </p>
-
-            <h1 className="text-3xl font-bold text-[#202629]">
-              {ambassador.full_name}
-            </h1>
-
-            <p className="mt-2 text-sm text-gray-500">
-              {ambassador.college_name} • Graduation{" "}
-              {ambassador.graduation_year}
-            </p>
-
-            <p className="mt-1 text-sm text-gray-400">
-              {ambassador.email}
-            </p>
-          </div>
-        </div>
-
-        <span
-          className={`w-fit rounded-full px-4 py-2 text-xs font-bold ${
-            ambassador.status === "ACTIVE"
-              ? "bg-green-50 text-green-700"
-              : ambassador.status === "PENDING"
-                ? "bg-yellow-50 text-yellow-700"
-                : "bg-red-50 text-red-700"
-          }`}
-        >
-          {ambassador.status}
-        </span>
-      </section>
-
-      {/* Eligibility */}
-      <section
-        className={`mb-6 rounded-2xl border p-5 ${
-          isActive
-            ? "border-[#BDE3E0] bg-[#EDF8F7]"
-            : "border-[#F1D9A7] bg-[#FFF9EC]"
-        }`}
-      >
-        <p className="font-semibold text-[#202629]">
-          {isActive
-            ? "Active Campus Ambassador"
-            : "Not currently an active Campus Ambassador"}
+      <section className="mb-8">
+        <p className="mb-2 text-sm font-medium text-[#238C89]">
+          SOCIAL ACCOUNTS
         </p>
 
-        <p className="mt-2 text-sm leading-6 text-gray-500">
-          {isActive
-            ? "This ambassador has at least one verified social account and is eligible for campaign scoring."
-            : "This ambassador does not currently have a verified social account and is excluded from scoring and rankings."}
+        <h1 className="text-3xl font-bold tracking-tight text-[#202629]">
+          Connected social platforms
+        </h1>
+
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-500">
+          Connect the social accounts you use for CiPD campaigns. Only users
+          with at least one verified social account are counted as active
+          Campus Ambassadors.
         </p>
       </section>
 
-      {message && selectedPostId === null && (
+      {/* Status message */}
+      {message && (
         <section className="mb-6 rounded-xl border border-gray-200 bg-white p-4">
           <p className="text-sm font-medium text-[#202629]">{message}</p>
         </section>
       )}
 
-      {/* Real performance */}
-      <section className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-5">
-        {[
-          [
-            "Total Reach",
-            formatNumber(metrics.total_reach),
-            "#54B9B4",
-          ],
-          [
-            "Engagement",
-            `${metrics.engagement_rate}%`,
-            "#9383D8",
-          ],
-          [
-            "Normalized Score",
-            rating
-              ? Number(rating.normalized_score).toFixed(2)
-              : "—",
-            "#E98AAE",
-          ],
-          [
-            "Percentile",
-            rating
-              ? `${Number(rating.percentile_rank).toFixed(2)}%`
-              : "—",
-            "#F0C568",
-          ],
-          [
-            "Rank",
-            ranking.current_rank !== null
-              ? `#${ranking.current_rank}`
-              : "—",
-            "#54B9B4",
-          ],
-        ].map(([label, value, color]) => (
+      {/* Ambassador eligibility */}
+      <section
+        className={`mb-7 rounded-2xl border p-6 ${
+          hasVerifiedAccount
+            ? "border-[#BDE3E0] bg-[#EDF8F7]"
+            : "border-[#F1D9A7] bg-[#FFF9EC]"
+        }`}
+      >
+        <div className="flex items-start gap-4">
           <div
-            key={label}
-            className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm"
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full font-bold text-white ${
+              hasVerifiedAccount ? "bg-[#54B9B4]" : "bg-[#F0C568]"
+            }`}
           >
-            <div
-              className="mb-5 h-1.5 w-10 rounded-full"
-              style={{ backgroundColor: color }}
-            />
-
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-              {label}
-            </p>
-
-            <p className="mt-3 text-2xl font-bold text-[#202629]">
-              {value}
-            </p>
+            {hasVerifiedAccount ? "✓" : "!"}
           </div>
-        ))}
-      </section>
 
-      <section className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
-        {/* Profile */}
-        <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
-          <h2 className="text-xl font-bold text-[#202629]">
-            Profile information
-          </h2>
+          <div>
+            <div className="flex items-center gap-3">
+              <p className="text-lg font-bold text-[#202629]">
+                {hasVerifiedAccount
+                  ? "Active Campus Ambassador"
+                  : "Pending social connection"}
+              </p>
 
-          <div className="mt-6 space-y-5">
-            {[
-              ["Full name", ambassador.full_name],
-              ["Email", ambassador.email],
-              ["College", ambassador.college_name],
-              [
-                "Graduation year",
-                String(ambassador.graduation_year),
-              ],
-              ["Status", ambassador.status],
-            ].map(([label, value]) => (
-              <div
-                key={label}
-                className="flex items-center justify-between border-b border-gray-100 pb-4"
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-bold ${
+                  hasVerifiedAccount
+                    ? "bg-[#DDF3F1] text-[#238C89]"
+                    : "bg-[#FCECC8] text-[#9A6A00]"
+                }`}
               >
-                <span className="text-sm text-gray-400">
-                  {label}
-                </span>
+                {hasVerifiedAccount ? "ACTIVE" : "PENDING"}
+              </span>
+            </div>
 
-                <span className="text-sm font-semibold text-[#202629]">
-                  {value}
-                </span>
-              </div>
-            ))}
+            <p className="mt-2 text-sm leading-6 text-gray-500">
+              {hasVerifiedAccount
+                ? "At least one connected social account is verified. Your valid campaign engagement can be included in scoring and normalization."
+                : "Your registration exists, but you are not counted as an active Campus Ambassador until a supported social account is connected and verified."}
+            </p>
           </div>
         </div>
+      </section>
 
-        {/* Social */}
-        <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
-          <h2 className="text-xl font-bold text-[#202629]">
-            Connected social accounts
-          </h2>
+      {/* Accounts */}
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        {supportedPlatforms.map((platform) => {
+          const account = getAccount(platform);
+          const connected = Boolean(account);
 
-          {social_accounts.length === 0 ? (
-            <div className="mt-6 rounded-xl border border-dashed border-gray-300 bg-[#F8FAFA] p-6">
-              <p className="font-semibold text-[#202629]">
-                No connected accounts
-              </p>
+          const platformName =
+            platform === "INSTAGRAM" ? "Instagram" : "LinkedIn";
 
-              <p className="mt-2 text-sm text-gray-500">
-                This ambassador has not connected a social account.
-              </p>
-            </div>
-          ) : (
-            <div className="mt-6 space-y-4">
-              {social_accounts.map((account) => (
-                <div
-                  key={account.account_id}
-                  className="rounded-xl bg-[#F8FAFA] p-5"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="font-bold text-[#202629]">
-                        {account.platform}
-                      </p>
-
-                      <p className="mt-1 text-sm text-gray-500">
-                        {account.profile_handle}
-                      </p>
-                    </div>
-
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        account.verified
-                          ? "bg-green-50 text-green-700"
-                          : "bg-yellow-50 text-yellow-700"
-                      }`}
-                    >
-                      {account.verified
-                        ? "VERIFIED"
-                        : "PENDING"}
-                    </span>
+          return (
+            <div
+              key={platform}
+              className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                  <div
+                    className={`flex h-12 w-12 items-center justify-center rounded-xl font-bold text-white ${
+                      platform === "INSTAGRAM"
+                        ? "bg-[#E98AAE]"
+                        : "bg-[#9383D8]"
+                    }`}
+                  >
+                    {platform === "INSTAGRAM" ? "IG" : "in"}
                   </div>
 
-                  <div className="mt-5 grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-xs text-gray-400">
-                        Followers
-                      </p>
+                  <div>
+                    <h2 className="text-xl font-bold text-[#202629]">
+                      {platformName}
+                    </h2>
 
-                      <p className="mt-1 font-semibold text-[#202629]">
-                        {formatNumber(account.follower_count)}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-gray-400">
-                        Last updated
-                      </p>
-
-                      <p className="mt-1 text-sm font-semibold text-[#202629]">
-                        {formatDate(account.updated_at)}
-                      </p>
-                    </div>
+                    <p className="mt-1 text-sm text-gray-400">
+                      {connected
+                        ? "Connected account"
+                        : "No account connected"}
+                    </p>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
 
-      {/* Rating */}
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-          Current Award
-        </p>
-
-        <div className="mt-3">
-          <Stars count={rating?.star_rating ?? null} />
-        </div>
-
-        {!rating && (
-          <p className="mt-2 text-sm text-gray-400">
-            No rating has been calculated yet.
-          </p>
-        )}
-      </section>
-
-      {/* Real submissions */}
-      <section className="mt-6 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-        <div className="border-b border-gray-100 p-7">
-          <h2 className="text-xl font-bold text-[#202629]">
-            Campaign submissions
-          </h2>
-
-          <p className="mt-1 text-sm text-gray-400">
-            Review submitted social posts and record verified metrics.
-          </p>
-        </div>
-
-        {submissions.length === 0 ? (
-          <div className="p-8">
-            <p className="text-sm text-gray-500">
-              This ambassador has not submitted any campaign posts.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-5 p-6">
-            {submissions.map((post) => (
-              <div
-                key={post.post_id}
-                className="rounded-2xl border border-gray-200 p-5"
-              >
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-[#9383D8]">
-                      {post.campaign_title}
-                    </p>
-
-                    <h3 className="mt-2 font-bold text-[#202629]">
-                      {post.platform}
-                    </h3>
-
-                    <a
-                      href={post.post_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mt-2 block break-all text-sm font-medium text-[#238C89]"
-                    >
-                      {post.post_url}
-                    </a>
-
-                    <p className="mt-2 text-xs text-gray-400">
-                      Submitted: {formatDate(post.published_at)}
-                    </p>
-                  </div>
-
+                {connected ? (
                   <span
-                    className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ${
-                      post.is_verified
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                      account?.verified
                         ? "bg-green-50 text-green-700"
                         : "bg-yellow-50 text-yellow-700"
                     }`}
                   >
-                    {post.is_verified
-                      ? "VERIFIED"
-                      : "PENDING"}
+                    {account?.verified ? "VERIFIED" : "PENDING"}
                   </span>
-                </div>
-
-                <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {[
-                    ["Reach", post.reach_count],
-                    ["Likes", post.likes_count],
-                    ["Comments", post.comments_count],
-                    ["Shares", post.shares_count],
-                  ].map(([label, value]) => (
-                    <div
-                      key={String(label)}
-                      className="rounded-xl bg-[#F8FAFA] p-4"
-                    >
-                      <p className="text-xs text-gray-400">
-                        {label}
-                      </p>
-
-                      <p className="mt-1 font-bold text-[#202629]">
-                        {formatNumber(Number(value))}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-5 flex flex-wrap gap-3">
-                  {post.platform === "INSTAGRAM" && (
-                    <button
-                      onClick={() => syncInstagramMetrics(post.post_id)}
-                      disabled={syncingPostId === post.post_id}
-                      className="rounded-xl bg-[#E98AAE] px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {syncingPostId === post.post_id
-                        ? "Syncing..."
-                        : "Sync from Instagram"}
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => openMetricForm(post)}
-                    className="rounded-xl bg-[#202629] px-5 py-3 text-sm font-semibold text-white"
-                  >
-                    {post.is_verified
-                      ? "Update Metrics"
-                      : "Verify & Add Metrics"}
-                  </button>
-                </div>
-
-                {selectedPostId === post.post_id && (
-                  <div className="mt-5 rounded-xl border border-[#E5DFF6] bg-[#F8F6FC] p-5">
-                    <h4 className="font-bold text-[#202629]">
-                      Metric verification
-                    </h4>
-
-                    <p className="mt-1 text-sm text-gray-500">
-                      Enter the latest verified cumulative metrics for this post.
-                    </p>
-
-                    <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                      {[
-                        ["Reach", "reach_count"],
-                        ["Likes", "likes_count"],
-                        ["Comments", "comments_count"],
-                        ["Shares", "shares_count"],
-                        ["Saves", "saves_count"],
-                        ["Views / Impressions", "views_impressions"],
-                      ].map(([label, key]) => (
-                        <div key={key}>
-                          <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                            {label}
-                          </label>
-
-                          <input
-                            type="number"
-                            min="0"
-                            value={
-                              metricForm[
-                                key as keyof MetricForm
-                              ]
-                            }
-                            onChange={(e) =>
-                              setMetricForm((current) => ({
-                                ...current,
-                                [key]: e.target.value,
-                              }))
-                            }
-                            className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-[#9383D8]"
-                          />
-                        </div>
-                      ))}
-                    </div>
-
-                    {message && (
-                      <p className="mt-4 text-sm font-medium text-[#238C89]">
-                        {message}
-                      </p>
-                    )}
-
-                    <div className="mt-5 flex gap-3">
-                      <button
-                        onClick={() =>
-                          verifyAndSaveMetrics(post.post_id)
-                        }
-                        disabled={saving}
-                        className="rounded-xl bg-[#9383D8] px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
-                      >
-                        {saving
-                          ? "Saving..."
-                          : "Verify & Save Metrics"}
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          setSelectedPostId(null)
-                        }
-                        className="rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-600"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
+                ) : (
+                  <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-500">
+                    NOT CONNECTED
+                  </span>
                 )}
               </div>
-            ))}
-          </div>
-        )}
+
+              {account ? (
+                <>
+                  <div className="mt-6 rounded-xl bg-[#F8FAFA] p-5">
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <p className="text-xs text-gray-400">Account</p>
+
+                        <p className="mt-1 font-semibold text-[#202629]">
+                          {account.profile_handle}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-gray-400">Followers</p>
+
+                        <p className="mt-1 font-semibold text-[#202629]">
+                          {account.follower_count.toLocaleString()}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-gray-400">Last sync</p>
+
+                        <p className="mt-1 font-semibold text-[#202629]">
+                          {new Date(account.updated_at).toLocaleString()}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-gray-400">Status</p>
+
+                        <p
+                          className={`mt-1 font-semibold ${
+                            account.verified
+                              ? "text-green-700"
+                              : "text-yellow-700"
+                          }`}
+                        >
+                          {account.verified
+                            ? "Ready for scoring"
+                            : "Verification pending"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => disconnectAccount(platform)}
+                    disabled={workingPlatform === platform}
+                    className="mt-5 rounded-xl border border-gray-200 px-5 py-3 text-sm font-semibold text-gray-500 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {workingPlatform === platform
+                      ? "Disconnecting..."
+                      : `Disconnect ${platformName}`}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="mt-6 rounded-xl border border-dashed border-gray-300 bg-[#F8FAFA] p-6">
+                    <p className="text-sm font-semibold text-[#202629]">
+                      {platform === "INSTAGRAM"
+                        ? "Connect with Instagram"
+                        : `Manually connect ${platformName}`}
+                    </p>
+
+                    <p className="mt-2 text-sm leading-6 text-gray-500">
+                      {platform === "INSTAGRAM"
+                        ? "You'll be redirected to Instagram to authorize CiPD. Your account must be a Business or Creator account — personal accounts can't be connected."
+                        : "Connect this account to allow CiPD to use permitted campaign engagement metrics for performance evaluation."}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() =>
+                      platform === "INSTAGRAM"
+                        ? connectInstagram()
+                        : connectAccount(platform)
+                    }
+                    disabled={workingPlatform === platform}
+                    className="mt-5 rounded-xl bg-[#202629] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#343B3E] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {workingPlatform === platform
+                      ? "Connecting..."
+                      : platform === "INSTAGRAM"
+                        ? "Connect Instagram"
+                        : `Connect ${platformName} (prototype)`}
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
       </section>
 
-      <section className="mt-6 rounded-2xl border border-[#E5DFF6] bg-[#F6F3FC] p-6">
+      {/* Data policy */}
+      <section className="mt-7 rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
+        <h2 className="text-xl font-bold text-[#202629]">
+          Social data & eligibility
+        </h2>
+
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+          {[
+            "Registration alone does not make a user an active Campus Ambassador.",
+            "At least one supported social account must be connected and verified.",
+            "Only verified campaign posts with valid engagement metrics enter normalization.",
+            "Disconnected accounts are excluded from active ambassador counts.",
+            "OAuth tokens must remain server-side and should never be exposed in the frontend.",
+            "The final product will show the last metric synchronization time for transparency.",
+          ].map((item) => (
+            <div
+              key={item}
+              className="flex gap-3 rounded-xl bg-[#F8FAFA] p-4"
+            >
+              <span className="mt-0.5 text-[#54B9B4]">✓</span>
+
+              <p className="text-sm leading-6 text-gray-500">{item}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Prototype warning */}
+      <section className="mt-6 rounded-2xl border border-[#E5DFF6] bg-[#F6F3FC] p-5">
         <p className="font-semibold text-[#202629]">
-          Metric history
+          Connection status
         </p>
 
-        <p className="mt-2 max-w-4xl text-sm leading-6 text-gray-500">
-          Each verification saves a new metric snapshot. Dashboard calculations
-          use the latest snapshot for each post, so previous snapshots remain in
-          PostgreSQL without being double-counted.
+        <p className="mt-2 text-sm leading-6 text-gray-500">
+          Instagram now uses real OAuth — connecting redirects you to
+          Instagram to authorize CiPD, and engagement metrics are pulled
+          from the Graph API for connected Business/Creator accounts.
+          LinkedIn is still a manual prototype connection; entering a
+          profile handle simulates verification until real LinkedIn OAuth
+          is added.
         </p>
       </section>
     </div>

@@ -220,6 +220,13 @@ def get_valid_instagram_token(ambassador_id: int, conn) -> str:
     return access_token
 
 
+def _normalize_permalink(url: str) -> str:
+    # Instagram's "Copy Link" share action appends a ?stkn=... tracking
+    # token that isn't present in the canonical permalink the Graph API
+    # returns, so strip query string/fragment before comparing.
+    return url.split("?")[0].split("#")[0].rstrip("/")
+
+
 def resolve_instagram_media_id(access_token: str, post_url: str) -> str:
     """
     The Graph API only returns media the authenticated professional
@@ -227,7 +234,7 @@ def resolve_instagram_media_id(access_token: str, post_url: str) -> str:
     to resolve a public post URL to that ID directly. We page through
     the account's own media and match on permalink.
     """
-    normalized_target = post_url.rstrip("/")
+    normalized_target = _normalize_permalink(post_url)
     url = "https://graph.instagram.com/me/media"
     params = {
         "fields": "id,permalink",
@@ -241,7 +248,7 @@ def resolve_instagram_media_id(access_token: str, post_url: str) -> str:
         data = response.json()
 
         for item in data.get("data", []):
-            if item.get("permalink", "").rstrip("/") == normalized_target:
+            if _normalize_permalink(item.get("permalink", "")) == normalized_target:
                 return item["id"]
 
         next_page = data.get("paging", {}).get("next")
@@ -250,7 +257,7 @@ def resolve_instagram_media_id(access_token: str, post_url: str) -> str:
 
         url = next_page
         params = None  # "next" URL already includes all query params
-
+        
     raise HTTPException(
         status_code=404,
         detail=(
@@ -259,7 +266,6 @@ def resolve_instagram_media_id(access_token: str, post_url: str) -> str:
             "connected professional account."
         ),
     )
-
 
 def get_current_user(authorization: str | None = Header(default=None)):
     if not authorization:
