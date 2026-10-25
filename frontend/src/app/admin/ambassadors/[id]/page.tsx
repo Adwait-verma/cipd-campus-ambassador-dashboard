@@ -119,6 +119,7 @@ export default function AmbassadorDetailPage() {
 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [syncingPostId, setSyncingPostId] = useState<number | null>(null);
 
   const loadAmbassador = useCallback(async () => {
     try {
@@ -216,6 +217,36 @@ const response = await authFetch(
       setMessage("Could not connect to the backend.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function syncInstagramMetrics(postId: number) {
+    try {
+      setSyncingPostId(postId);
+      setMessage("");
+
+      const response = await authFetch(
+        `http://127.0.0.1:8000/admin/campaign-posts/${postId}/sync-instagram-metrics`,
+        { method: "POST" }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        setMessage(result.detail || "Failed to sync Instagram metrics.");
+        return;
+      }
+
+      setMessage(
+        "Metrics pulled from Instagram and post verified. Open this campaign under Campaigns and click Recalculate Ratings to update performance and the leaderboard."
+      );
+      setSelectedPostId(null);
+
+      await loadAmbassador();
+    } catch {
+      setMessage("Could not connect to the backend.");
+    } finally {
+      setSyncingPostId(null);
     }
   }
 
@@ -357,6 +388,12 @@ const response = await authFetch(
             : "This ambassador does not currently have a verified social account and is excluded from scoring and rankings."}
         </p>
       </section>
+
+      {message && selectedPostId === null && (
+        <section className="mb-6 rounded-xl border border-gray-200 bg-white p-4">
+          <p className="text-sm font-medium text-[#202629]">{message}</p>
+        </section>
+      )}
 
       {/* Real performance */}
       <section className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-5">
@@ -624,14 +661,28 @@ const response = await authFetch(
                   ))}
                 </div>
 
-                <button
-                  onClick={() => openMetricForm(post)}
-                  className="mt-5 rounded-xl bg-[#202629] px-5 py-3 text-sm font-semibold text-white"
-                >
-                  {post.is_verified
-                    ? "Update Metrics"
-                    : "Verify & Add Metrics"}
-                </button>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  {post.platform === "INSTAGRAM" && (
+                    <button
+                      onClick={() => syncInstagramMetrics(post.post_id)}
+                      disabled={syncingPostId === post.post_id}
+                      className="rounded-xl bg-[#E98AAE] px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {syncingPostId === post.post_id
+                        ? "Syncing..."
+                        : "Sync from Instagram"}
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => openMetricForm(post)}
+                    className="rounded-xl bg-[#202629] px-5 py-3 text-sm font-semibold text-white"
+                  >
+                    {post.is_verified
+                      ? "Update Metrics"
+                      : "Verify & Add Metrics"}
+                  </button>
+                </div>
 
                 {selectedPostId === post.post_id && (
                   <div className="mt-5 rounded-xl border border-[#E5DFF6] bg-[#F8F6FC] p-5">
