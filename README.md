@@ -93,6 +93,20 @@ Open `http://localhost:3000`. For a production-mode local check, run `npm run bu
 
 Sign in as an administrator and open **Settings** to save the official `https://chat.whatsapp.com/...` group invite link, set the programme help email/phone, or email all or one selected ambassador. The help contact is visible to ambassadors under **Help & Contact** and does not change the login email or SMTP sender. Registration stays open when the group link is absent. Ambassadors can view the current group link under **How It Works**. The protected **Activity Log** page shows the latest 200 important administrative actions without recording passwords, access tokens, or message bodies.
 
+### Instagram OAuth setup (required for Instagram connections)
+
+Instagram connections use real OAuth (Instagram API with Instagram Login), not a manual prototype. To enable it:
+
+1. Create an app at [developers.facebook.com](https://developers.facebook.com), add the **Instagram** product, and configure **Business Login for Instagram** to get an App ID and App Secret.
+2. Instagram only accepts **HTTPS** redirect URIs, so for local development run an HTTPS tunnel (for example `ngrok http 8000`) and register `https://<your-tunnel-domain>/ambassador/social-accounts/instagram/callback` as the redirect URI. Also add the bare tunnel domain under **App settings > Basic > App Domains**.
+3. While the app is in Development Mode, add each ambassador's Instagram account as an **Instagram Tester** in the App Dashboard and accept the invite from inside the Instagram app. This needs no app review for a small pilot group; going live for a wider audience requires Meta app review.
+4. Ambassadors must connect a **Business or Creator** Instagram account. Personal accounts cannot use this login flow; switching is free and reversible from the Instagram app.
+5. Fill in `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `INSTAGRAM_REDIRECT_URI` and `FRONTEND_URL` in `backend/.env`, and generate `TOKEN_ENCRYPTION_KEY` with:
+   ```powershell
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+6. As an admin, open an ambassador's profile and use **Sync from Instagram** on a submitted Instagram post to pull its real reach, likes, comments, shares, saves and views. The post must have been published from the connected Business/Creator account. After syncing, recalculate the campaign's ratings as usual.
+
 ## Useful validation commands
 
 ```powershell
@@ -107,8 +121,8 @@ npm run build
 
 ## Prototype limitations
 
-- Social account linking is a manual prototype and does not perform real OAuth authorization.
-- Social metrics are entered and verified manually by an administrator; no platform metrics API is connected.
+- Instagram uses real OAuth and the Instagram Graph API for metrics (Business/Creator accounts only; Development Mode requires each ambassador to be added as a Tester). LinkedIn and X/Twitter linking remain manual prototypes and do not perform real OAuth authorization.
+- Metrics for non-Instagram posts are entered and verified manually by an administrator.
 - The admin supplies the optional group invite URL under **Settings**. An ambassador receives it in the one-time welcome email only when it is available at registration and can always view the latest link under **How It Works**. The portal cannot silently add the person to a group. The separate WhatsApp action opens a direct chat with a prefilled greeting, and the admin must press Send.
 - Campaign and monthly emails are real SMTP-backed jobs only after valid SMTP settings are supplied. Failed deliveries are retained for review and limited retries; no credentials are included in the repository.
 - The frontend API URL and backend CORS origins target local development (`localhost`/`127.0.0.1`). Configure both explicitly before deployment.

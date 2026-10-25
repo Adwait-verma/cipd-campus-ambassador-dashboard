@@ -53,6 +53,21 @@ export default function SocialAccountsPage() {
       sessionStorage.removeItem("cipd_user");
       window.location.replace("/login");
     }
+
+    const params = new URLSearchParams(window.location.search);
+    const instagramStatus = params.get("instagram");
+
+    if (instagramStatus === "connected") {
+      queueMicrotask(() =>
+        setMessage("Instagram connected successfully.")
+      );
+    } else if (instagramStatus === "error") {
+      queueMicrotask(() =>
+        setMessage(
+          params.get("message") || "Failed to connect Instagram."
+        )
+      );
+    }
   }, []);
 
   async function loadAccounts(userId: number) {
@@ -141,6 +156,34 @@ export default function SocialAccountsPage() {
     } catch {
       setMessage("Could not connect to the backend.");
     } finally {
+      setWorkingPlatform(null);
+    }
+  }
+
+  async function connectInstagram() {
+    if (!user) return;
+
+    try {
+      setWorkingPlatform("INSTAGRAM");
+      setMessage("");
+
+      const response = await authFetch(
+        "http://127.0.0.1:8000/ambassador/social-accounts/instagram/authorize"
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setMessage(
+          data.detail || "Failed to start Instagram connection."
+        );
+        setWorkingPlatform(null);
+        return;
+      }
+
+      window.location.href = data.authorize_url;
+    } catch {
+      setMessage("Could not connect to the backend.");
       setWorkingPlatform(null);
     }
   }
@@ -390,23 +433,32 @@ export default function SocialAccountsPage() {
                 <>
                   <div className="mt-6 rounded-xl border border-dashed border-gray-300 bg-[#F8FAFA] p-6">
                     <p className="text-sm font-semibold text-[#202629]">
-                      Manually connect {platformName}
+                      {platform === "INSTAGRAM"
+                        ? "Connect with Instagram"
+                        : `Manually connect ${platformName}`}
                     </p>
 
                     <p className="mt-2 text-sm leading-6 text-gray-500">
-                      Connect this account to allow CiPD to use permitted
-                      campaign engagement metrics for performance evaluation.
+                      {platform === "INSTAGRAM"
+                        ? "You'll be redirected to Instagram to authorize CiPD. Your account must be a Business or Creator account — personal accounts can't be connected."
+                        : "Connect this account to allow CiPD to use permitted campaign engagement metrics for performance evaluation."}
                     </p>
                   </div>
 
                   <button
-                    onClick={() => connectAccount(platform)}
+                    onClick={() =>
+                      platform === "INSTAGRAM"
+                        ? connectInstagram()
+                        : connectAccount(platform)
+                    }
                     disabled={workingPlatform === platform}
                     className="mt-5 rounded-xl bg-[#202629] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#343B3E] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {workingPlatform === platform
                       ? "Connecting..."
-                      : `Connect ${platformName} (prototype)`}
+                      : platform === "INSTAGRAM"
+                        ? "Connect Instagram"
+                        : `Connect ${platformName} (prototype)`}
                   </button>
                 </>
               )}
@@ -445,15 +497,16 @@ export default function SocialAccountsPage() {
       {/* Prototype warning */}
       <section className="mt-6 rounded-2xl border border-[#E5DFF6] bg-[#F6F3FC] p-5">
         <p className="font-semibold text-[#202629]">
-          Prototype social connection
+          Connection status
         </p>
 
         <p className="mt-2 text-sm leading-6 text-gray-500">
-          Social connections are currently being stored in the real CiPD
-          database, but platform OAuth is not connected yet. During this
-          prototype stage, entering a profile handle simulates successful
-          verification. Real Instagram and LinkedIn authorization will replace
-          this step later.
+          Instagram now uses real OAuth — connecting redirects you to
+          Instagram to authorize CiPD, and engagement metrics are pulled
+          from the Graph API for connected Business/Creator accounts.
+          LinkedIn is still a manual prototype connection; entering a
+          profile handle simulates verification until real LinkedIn OAuth
+          is added.
         </p>
       </section>
     </div>
