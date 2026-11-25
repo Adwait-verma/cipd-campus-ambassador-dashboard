@@ -3,7 +3,7 @@ import { authFetch } from "@/lib/api";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-type AmbassadorStatus = "ACTIVE" | "PENDING" | "SUSPENDED";
+type AmbassadorStatus = "ACTIVE" | "PENDING" | "SUSPENDED" | "LEFT";
 
 type Ambassador = {
   ambassador_id: number;
@@ -247,8 +247,8 @@ export default function AdminAmbassadorsPage() {
         </p>
 
         <p className="mt-2 text-sm leading-6 text-gray-500">
-          A registered user becomes an active Campus Ambassador only when at
-          least one supported social account is connected and verified.
+          A registered user becomes an active Campus Ambassador only when
+          a verified Instagram account is connected.
           Pending ambassadors are excluded from scoring, rankings and awards.
         </p>
       </section>
@@ -263,7 +263,7 @@ export default function AdminAmbassadorsPage() {
         />
 
         <div className="flex flex-wrap gap-3">
-          {["ALL", "ACTIVE", "PENDING", "SUSPENDED"].map(
+          {["ALL", "ACTIVE", "PENDING", "SUSPENDED", "LEFT"].map(
             (status) => (
               <button
                 key={status}

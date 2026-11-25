@@ -36,7 +36,7 @@ const navigation = [
     icon: "≡",
   },
   {
-    name: "Settings",
+    name: "Settings & Email",
     href: "/admin/settings",
     icon: "⚙",
   },
@@ -56,7 +56,7 @@ export default function AdminSidebar() {
 
   return (
     <aside className="fixed left-0 top-0 flex h-screen w-64 flex-col bg-[#202629] text-white">
-      <div className="border-b border-white/10 px-6 py-7">
+      <div className="shrink-0 border-b border-white/10 px-6 py-7">
         <BrandLogo className="w-32" />
 
         <p className="mt-2 text-xs font-semibold tracking-[0.18em] text-[#9383D8]">
@@ -64,7 +64,7 @@ export default function AdminSidebar() {
         </p>
       </div>
 
-      <nav className="flex-1 px-4 py-6">
+      <nav aria-label="Administration" className="min-h-0 flex-1 overflow-y-auto px-4 py-6">
         <p className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-widest text-gray-500">
           Administration
         </p>
@@ -103,7 +103,7 @@ export default function AdminSidebar() {
         </div>
       </nav>
 
-      <div className="border-t border-white/10 px-4 py-5">
+      <div className="shrink-0 border-t border-white/10 px-4 py-5">
         <button
           type="button"
           onClick={handleLogout}

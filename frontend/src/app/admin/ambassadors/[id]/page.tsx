@@ -1,5 +1,7 @@
 "use client";
 import { authFetch } from "@/lib/api";
+import MembershipControls from "@/components/MembershipControls";
+import InstagramSyncMonitor from "@/components/InstagramSyncMonitor";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -238,7 +240,7 @@ const response = await authFetch(
       }
 
       setMessage(
-        "Metrics pulled from Instagram and post verified. Open this campaign under Campaigns and click Recalculate Ratings to update performance and the leaderboard."
+        "Metrics refreshed from Instagram. Changed metrics automatically update campaign ratings and the leaderboard."
       );
       setSelectedPostId(null);
 
@@ -308,6 +310,8 @@ const response = await authFetch(
 
   return (
     <div className="mx-auto max-w-[1500px]">
+      <MembershipControls ambassadorId={ambassadorId} />
+      <InstagramSyncMonitor ambassadorId={ambassadorId} />
       {/* Back */}
       <div className="mb-6">
         <Link
@@ -384,7 +388,7 @@ const response = await authFetch(
 
         <p className="mt-2 text-sm leading-6 text-gray-500">
           {isActive
-            ? "This ambassador has at least one verified social account and is eligible for campaign scoring."
+            ? "This ambassador has a verified Instagram account and is eligible for campaign scoring."
             : "This ambassador does not currently have a verified social account and is excluded from scoring and rankings."}
         </p>
       </section>
@@ -488,7 +492,7 @@ const response = await authFetch(
         {/* Social */}
         <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
           <h2 className="text-xl font-bold text-[#202629]">
-            Connected social accounts
+            Connected Instagram account
           </h2>
 
           {social_accounts.length === 0 ? (
@@ -498,7 +502,7 @@ const response = await authFetch(
               </p>
 
               <p className="mt-2 text-sm text-gray-500">
-                This ambassador has not connected a social account.
+                This ambassador has not connected Instagram.
               </p>
             </div>
           ) : (
@@ -585,7 +589,7 @@ const response = await authFetch(
           </h2>
 
           <p className="mt-1 text-sm text-gray-600">
-            Review submitted social posts and record verified metrics.
+            Instagram metrics update automatically. Manual verification is available for independently checked data.
           </p>
         </div>
 
@@ -670,7 +674,7 @@ const response = await authFetch(
                     >
                       {syncingPostId === post.post_id
                         ? "Syncing..."
-                        : "Sync from Instagram"}
+                        : "Sync now"}
                     </button>
                   )}
 

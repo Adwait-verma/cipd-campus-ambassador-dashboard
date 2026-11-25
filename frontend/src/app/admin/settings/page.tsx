@@ -1,7 +1,10 @@
 "use client";
 
 import { authFetch } from "@/lib/api";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import GroupNotice from "@/components/GroupNotice";
+import InstagramSyncMonitor from "@/components/InstagramSyncMonitor";
+import ConnectionHealth from "@/components/ConnectionHealth";
 
 type EmailStatus = {
   delivery_enabled: boolean;
@@ -39,12 +42,12 @@ export default function AdminSettingsPage() {
   const [emailStatusMessage, setEmailStatusMessage] = useState("");
   const [sendingPending, setSendingPending] = useState(false);
 
-  async function refreshEmailStatus() {
+  const refreshEmailStatus = useCallback(async () => {
     const response = await authFetch("http://127.0.0.1:8000/admin/notifications/status");
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "Could not load email status.");
     setEmailStatus(data);
-  }
+  }, []);
 
   useEffect(() => {
     authFetch("http://127.0.0.1:8000/admin/settings")
@@ -86,6 +89,17 @@ export default function AdminSettingsPage() {
         setBroadcastMessage(error instanceof Error ? error.message : "Could not load ambassadors.")
       );
   }, []);
+
+  useEffect(() => {
+    let pending = false;
+    const timer = window.setInterval(async () => {
+      if (pending || document.hidden) return;
+      pending = true;
+      try { await refreshEmailStatus(); } catch { /* Preserve the last known counts on a transient failure. */ }
+      finally { pending = false; }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [refreshEmailStatus]);
 
   async function sendPending() {
     if (!window.confirm("Send all queued emails now, including older welcome and monthly-report messages?")) return;
@@ -211,6 +225,9 @@ export default function AdminSettingsPage() {
         </button>
       </form>
       {message && <p role="status" className="mt-5 text-sm text-[#238C89]">{message}</p>}
+      <GroupNotice key={inviteUrl} inviteUrl={inviteUrl} />
+      <InstagramSyncMonitor />
+      <ConnectionHealth admin />
     </section>
     <section className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
       <h2 className="text-2xl font-bold text-[#202629]">Ambassador help contact</h2>
@@ -255,7 +272,7 @@ export default function AdminSettingsPage() {
             </p>
           )}
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-            {["PENDING", "SENDING", "SENT", "FAILED"].map((state) => (
+            {["PENDING", "SENDING", "SENT", "FAILED", "CANCELLED"].map((state) => (
               <div key={state} className="rounded-xl border border-gray-200 p-3">
                 <span className="block font-semibold text-gray-600">{state.toLowerCase()}</span>
                 <span className="text-2xl font-bold text-[#202629]">

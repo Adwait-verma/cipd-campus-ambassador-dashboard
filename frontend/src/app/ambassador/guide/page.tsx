@@ -12,10 +12,10 @@ const steps = [
     action: "Open profile",
   },
   {
-    title: "Connect a social account",
-    body: "Add Instagram, LinkedIn or X/Twitter. At least one account must be verified before you become ACTIVE and enter scoring.",
+    title: "Connect Instagram",
+    body: "Connect your Instagram Business or Creator account to become ACTIVE and eligible for campaign scoring.",
     href: "/ambassador/social-accounts",
-    action: "Manage social accounts",
+    action: "Connect Instagram",
   },
   {
     title: "Read the campaign brief",
@@ -25,17 +25,17 @@ const steps = [
   },
   {
     title: "Publish and submit the post",
-    body: "Publish on a connected platform during the campaign, then submit the direct public post URL on the campaign page.",
+    body: "Publish on your connected Instagram account during the campaign, then submit the direct Instagram post URL on the campaign page.",
     href: "/ambassador/campaigns",
     action: "Submit a post",
   },
   {
-    title: "Admin verifies the metrics",
-    body: "In this prototype, platform metrics are not fetched automatically. An admin checks the post and stores its reach and engagement snapshot.",
+    title: "Metrics update automatically",
+    body: "CiPD fetches permitted metrics from your submitted Instagram post on the schedule shown above. If your connection expires, reconnect Instagram; your last successful metrics are kept.",
   },
   {
-    title: "Admin calculates campaign ratings",
-    body: "After verified metrics are available, the admin runs the existing normalized calculation for that campaign. Your rank, percentile and star rating then appear in Performance.",
+    title: "Follow your ranking",
+    body: "Ratings update automatically after changed metrics arrive. Performance shows overall and campaign rankings. Each campaign result becomes fixed after its closing date.",
     href: "/ambassador/performance",
     action: "View performance",
   },
@@ -62,7 +62,7 @@ export default function AmbassadorGuidePage() {
           From registration to ranking
         </h1>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-gray-600">
-          Follow these steps for every CiPD campaign. Verification and rating are separate so only reviewed campaign data enters the leaderboard.
+          Follow these steps for every CiPD Instagram campaign. Submit your post once; metrics and ratings update automatically.
         </p>
       </section>
 
@@ -103,9 +103,9 @@ export default function AmbassadorGuidePage() {
       </section>
 
       <section className="mt-6 rounded-2xl border border-[#E5DFF6] bg-[#F6F3FC] p-6">
-        <h2 className="font-bold text-[#202629]">What “wait for rating calculation” means</h2>
+        <h2 className="font-bold text-[#202629]">When your result appears</h2>
         <p className="mt-2 text-sm leading-6 text-gray-600">
-          Submitting a URL creates a pending post. The admin first verifies the stored metrics, then runs the campaign calculation. This avoids ranking unreviewed or incomplete data and does not change the existing scoring formula.
+          Your submission enters scoring after Instagram returns complete metrics. Updates can be delayed by Instagram limits or connection issues. Check Performance after the next update, and contact programme support if a problem continues. Missing data is never counted as zero.
         </p>
       </section>
     </div>

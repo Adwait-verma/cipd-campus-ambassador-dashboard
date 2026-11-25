@@ -33,6 +33,9 @@ class Result:
     def fetchall(self):
         return self.rows
 
+    def scalar(self):
+        return self.row
+
 
 class Connection:
     def __init__(self, recipients=None):
@@ -41,6 +44,8 @@ class Connection:
 
     def execute(self, query, params=None):
         sql = str(query)
+        if 'SELECT EXISTS(SELECT 1 FROM ambassadors' in sql:
+            return Result(row=False)
         if "INSERT INTO email_broadcasts" in sql:
             return SimpleNamespace(scalar_one=lambda: 9)
         if "SELECT user_id, full_name FROM users" in sql:
@@ -59,7 +64,7 @@ class NotificationTests(unittest.TestCase):
         conn = Connection()
         self.assertTrue(queue_welcome_email(conn, 1, "Test Ambassador", None))
         body = conn.messages[0]["body"]
-        self.assertIn("Connect a supported social account", body)
+        self.assertIn("Connect your Instagram Business or Creator account", body)
         self.assertIn("Submit the direct URL", body)
         self.assertIn("/ambassador/guide", body)
         self.assertNotIn("WHATSAPP GROUP", body)
@@ -193,7 +198,9 @@ class NotificationTests(unittest.TestCase):
         write_connection.execute.side_effect = [claim, MagicMock()]
         recipient = MagicMock()
         recipient.scalar.return_value = "ambassador@example.org"
-        read_connection.execute.return_value = recipient
+        membership = MagicMock()
+        membership.scalar.return_value = False
+        read_connection.execute.side_effect = [recipient, membership]
         config = {
             "EMAIL_DELIVERY_ENABLED": "true",
             "SMTP_HOST": "smtp.gmail.com",
