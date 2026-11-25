@@ -21,7 +21,7 @@ const navigation = [
     icon: "↗",
   },
   {
-    name: "Social Accounts",
+    name: "Instagram",
     href: "/ambassador/social-accounts",
     icon: "◎",
   },
@@ -57,7 +57,7 @@ export default function Sidebar() {
   return (
     <aside className="fixed left-0 top-0 flex h-screen w-64 flex-col bg-[#202629] text-white">
       {/* Branding */}
-      <div className="border-b border-white/10 px-6 py-7">
+      <div className="shrink-0 border-b border-white/10 px-6 py-7">
         <BrandLogo className="w-32" />
 
         <p className="mt-2 text-xs font-semibold tracking-[0.18em] text-[#54B9B4]">
@@ -66,7 +66,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-4 py-6">
+      <nav aria-label="Ambassador workspace" className="min-h-0 flex-1 overflow-y-auto px-4 py-6">
         <p className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-widest text-gray-500">
           Workspace
         </p>
@@ -106,7 +106,7 @@ export default function Sidebar() {
       </nav>
 
       {/* Bottom */}
-      <div className="border-t border-white/10 px-4 py-5">
+      <div className="shrink-0 border-t border-white/10 px-4 py-5">
         <button
           type="button"
           onClick={handleLogout}

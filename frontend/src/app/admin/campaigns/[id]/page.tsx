@@ -1,5 +1,6 @@
 "use client";
 import { authFetch } from "@/lib/api";
+import CampaignManagement from "@/components/CampaignManagement";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -201,6 +202,7 @@ export default function AdminCampaignDetailPage() {
         </span>
       </section>
 
+      <CampaignManagement campaignId={campaignId} />
       <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">

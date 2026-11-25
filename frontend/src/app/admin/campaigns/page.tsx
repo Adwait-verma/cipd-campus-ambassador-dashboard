@@ -17,6 +17,7 @@ type Campaign = {
   start_date: string;
   end_date: string;
   is_active: boolean;
+  archived_at: string | null;
   status: CampaignStatus;
   participants: number;
   submissions: number;
@@ -280,7 +281,7 @@ export default function AdminCampaignsPage() {
                                 : "bg-gray-100 text-gray-500"
                           }`}
                         >
-                          {campaign.status}
+                          {campaign.archived_at ? "ARCHIVED" : !campaign.is_active ? "CLOSED" : campaign.status}
                         </span>
                       </td>
 

@@ -1,6 +1,8 @@
 "use client";
 
 import { authFetch } from "@/lib/api";
+import MembershipControls from "@/components/MembershipControls";
+import ConnectionHealth from "@/components/ConnectionHealth";
 import { useEffect, useState } from "react";
 
 type StoredUser = {
@@ -307,7 +309,7 @@ export default function ProfilePage() {
 
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-500">
-                  Social account
+                  Instagram account
                 </span>
 
                 <span
@@ -472,6 +474,8 @@ export default function ProfilePage() {
       </section>
 
       {/* Status rule */}
+      <MembershipControls />
+      <ConnectionHealth />
       <section className="mt-6 rounded-2xl border border-[#BDE3E0] bg-[#EDF8F7] p-5">
         <p className="font-semibold text-[#202629]">
           Ambassador status rule
@@ -479,7 +483,7 @@ export default function ProfilePage() {
 
         <p className="mt-2 text-sm leading-6 text-gray-500">
           Registration alone does not make a user an active Campus
-          Ambassador. At least one supported social account must be
+          Ambassador. Your Instagram account must be
           connected and verified before the user is counted in
           ambassador statistics or becomes eligible for
           engagement-based scoring.

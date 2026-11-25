@@ -48,3 +48,15 @@ test("a stored rating cannot bypass inactive ambassador eligibility", () => {
   assert.equal(result.stage, 2);
   assert.match(result.title, /eligibility/);
 });
+
+test("a final campaign result survives a member leaving", () => {
+  const result = progress({ ...verified, ambassador_status: "LEFT", rating_calculated_at: "2026-09-10T00:00:00Z", campaign_finalized_at: "2026-09-10T00:01:00Z" });
+  assert.equal(result.stage, 3);
+  assert.match(result.title, /Final campaign/);
+});
+
+test("a closed campaign with missing measurements does not promise another sync", () => {
+  const result = progress({ ...verified, fetched_at: null, campaign_finalized_at: "2026-09-10T00:01:00Z" });
+  assert.equal(result.stage, 1);
+  assert.match(result.title, /not scored/);
+});

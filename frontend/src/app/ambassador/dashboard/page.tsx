@@ -209,7 +209,7 @@ export default function AmbassadorDashboard() {
         {/* Real rating */}
         <div className="rounded-2xl border border-gray-200 bg-white px-6 py-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-            Current rating
+            Overall rating
           </p>
 
           {rating ? (
@@ -518,8 +518,8 @@ export default function AmbassadorDashboard() {
 
             <p className="mt-1 text-sm text-gray-500">
               {isActive
-                ? "You have at least one verified social account and are eligible for campaign scoring, rankings, and ambassador awards."
-                : "Connect and verify at least one supported social account to become eligible for campaign scoring, rankings, and ambassador awards."}
+                ? "You have a verified Instagram account and are eligible for campaign scoring, rankings, and ambassador awards."
+                : "Connect and verify your Instagram Business or Creator account to become eligible for campaign scoring, rankings, and ambassador awards."}
             </p>
           </div>
         </div>

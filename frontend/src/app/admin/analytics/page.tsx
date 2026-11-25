@@ -325,11 +325,11 @@ export default function AdminAnalyticsPage() {
       <section className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
         <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
           <h2 className="text-xl font-bold text-[#202629]">
-            Platform performance
+            Instagram performance
           </h2>
 
           <p className="mt-1 text-sm text-gray-400">
-            Verified performance grouped by platform
+            Verified Instagram performance
           </p>
 
           {platform_performance.length === 0 ? (

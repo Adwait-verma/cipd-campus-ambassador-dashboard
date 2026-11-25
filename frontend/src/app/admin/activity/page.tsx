@@ -26,19 +26,32 @@ export default function AdminActivityPage() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [filters, setFilters] = useState({ action: "", admin_user_id: "", date_from: "", date_to: "" });
+  const [admins, setAdmins] = useState<{ user_id: number; full_name: string }[]>([]);
+  const [actions, setActions] = useState<string[]>([]);
 
   useEffect(() => {
-    authFetch("http://127.0.0.1:8000/admin/activity-logs?limit=200")
+    let active = true;
+    const query = new URLSearchParams({ limit: "25", page: String(page) });
+    Object.entries(filters).forEach(([key, value]) => { if (value) query.set(key, value); });
+    authFetch(`http://127.0.0.1:8000/admin/activity-logs?${query}`)
       .then(async (response) => {
         const data = await response.json();
+        if (!active) return;
         if (!response.ok) throw new Error(data.detail || "Could not load activity history.");
         setActivities(data.activities || []);
+        setTotal(data.total); setAdmins(data.administrators); setActions(data.actions); setError("");
       })
-      .catch((loadError) =>
-        setError(loadError instanceof Error ? loadError.message : "Could not load activity history.")
-      )
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((loadError) => { if (active) setError(loadError instanceof Error ? loadError.message : "Could not load activity history."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [page, filters]);
+
+  function filter(key: keyof typeof filters, value: string) {
+    setPage(1); setLoading(true); setFilters(previous => ({ ...previous, [key]: value }));
+  }
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -48,6 +61,12 @@ export default function AdminActivityPage() {
         Review important admin actions such as campaign publication, metric verification, rating calculation, contact changes, CSV exports, and ambassador emails.
       </p>
 
+      <div className="mt-6 flex flex-wrap gap-4 text-sm text-[#202629]">
+        <label>From (India time)<input type="date" value={filters.date_from} onChange={e => filter("date_from", e.target.value)} className="ml-2 rounded-lg border p-2" /></label>
+        <label>To<input type="date" value={filters.date_to} onChange={e => filter("date_to", e.target.value)} className="ml-2 rounded-lg border p-2" /></label>
+        <label>Administrator<select value={filters.admin_user_id} onChange={e => filter("admin_user_id", e.target.value)} className="ml-2 rounded-lg border p-2"><option value="">All</option>{admins.map(a => <option key={a.user_id} value={a.user_id}>{a.full_name}</option>)}</select></label>
+        <label>Action<select value={filters.action} onChange={e => filter("action", e.target.value)} className="ml-2 rounded-lg border p-2"><option value="">All</option>{actions.map(a => <option key={a} value={a}>{actionLabel(a)}</option>)}</select></label>
+      </div>
       <section className="mt-8 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         {loading && <p className="p-7 text-gray-600">Loading activity history...</p>}
         {error && <p className="m-7 rounded-xl bg-red-50 p-4 text-sm font-medium text-red-700">{error}</p>}
@@ -85,7 +104,7 @@ export default function AdminActivityPage() {
                       )}
                     </td>
                     <td className="px-6 py-5">
-                      <p className="font-semibold text-[#202629]">{activity.admin_name || "Former administrator"}</p>
+                      <p className="font-semibold text-[#202629]">{activity.admin_name || (activity.summary.startsWith("Scheduled: ") ? "Automatic system update" : "Former administrator")}</p>
                       {activity.admin_email && <p className="mt-1 text-xs text-gray-500">{activity.admin_email}</p>}
                     </td>
                   </tr>
@@ -95,7 +114,8 @@ export default function AdminActivityPage() {
           </div>
         )}
       </section>
-      <p className="mt-4 text-xs leading-5 text-gray-500">The page displays the latest 200 recorded actions. Passwords, access tokens, and email message bodies are never stored in this log.</p>
+      <div className="mt-4 flex items-center gap-5 text-sm"><button disabled={page <= 1 || loading} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page} of {Math.max(1, Math.ceil(total / 25))} · {total} actions</span><button disabled={page * 25 >= total || loading} onClick={() => setPage(page + 1)}>Next</button></div>
+      <p className="mt-4 text-xs leading-5 text-gray-500">Dates are filtered in India time. Passwords, access tokens, and email message bodies are never stored in this log.</p>
     </div>
   );
 }

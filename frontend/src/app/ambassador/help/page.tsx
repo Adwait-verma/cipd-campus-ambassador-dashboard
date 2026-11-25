@@ -13,15 +13,25 @@ export default function AmbassadorHelpPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    authFetch("http://127.0.0.1:8000/ambassador/help-contact")
+    let active = true;
+    let running = false;
+    const load = () => {
+      if (running || document.hidden) return;
+      running = true;
+      void authFetch("http://127.0.0.1:8000/ambassador/help-contact")
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Could not load contact details.");
-        setContact(data);
+        if (active) { setContact(data); setError(""); }
       })
       .catch((loadError) =>
-        setError(loadError instanceof Error ? loadError.message : "Could not load contact details.")
-      );
+        active && setError(loadError instanceof Error ? loadError.message : "Could not load contact details.")
+      ).finally(() => { running = false; });
+    };
+    load();
+    const timer = window.setInterval(load, 30000);
+    window.addEventListener("focus", load);
+    return () => { active = false; clearInterval(timer); window.removeEventListener("focus", load); };
   }, []);
 
   return (
@@ -29,7 +39,7 @@ export default function AmbassadorHelpPage() {
       <p className="text-sm font-semibold uppercase tracking-wider text-[#238C89]">Support</p>
       <h1 className="mt-2 text-3xl font-bold text-[#202629]">Help &amp; programme contact</h1>
       <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600">
-        Contact the CiPD programme team if you need help with a campaign, submission, social-account verification, or your profile.
+        Contact the CiPD programme team if you need help with a campaign, submission, Instagram connection, or your profile. These are the public contact details provided by the administrator.
       </p>
 
       <section className="mt-8 rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">

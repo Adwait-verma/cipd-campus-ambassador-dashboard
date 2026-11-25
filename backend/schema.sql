@@ -17,7 +17,8 @@ CREATE TABLE ambassadors (
     user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
     college_name VARCHAR(150) NOT NULL,
     graduation_year INT NOT NULL,
-    status VARCHAR(20) DEFAULT 'ACTIVE'
+    status VARCHAR(20) DEFAULT 'ACTIVE',
+    left_at TIMESTAMPTZ
 );
 
 CREATE TABLE social_accounts (
@@ -42,7 +43,9 @@ CREATE TABLE campaigns (
     target_url TEXT,
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    archived_at TIMESTAMPTZ,
+    last_calculated_at TIMESTAMPTZ
 );
 
 CREATE TABLE campaign_posts (
@@ -153,7 +156,7 @@ CREATE TABLE email_outbox (
     reset_request_id BIGINT REFERENCES password_reset_requests(reset_request_id) ON DELETE CASCADE,
     subject TEXT NOT NULL,
     body TEXT NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED')),
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED', 'CANCELLED')),
     attempts INT NOT NULL DEFAULT 0,
     last_attempt_at TIMESTAMP WITH TIME ZONE,
     last_error TEXT,
@@ -169,6 +172,71 @@ ON email_outbox (
 );
 
 -- Quick sanity-check seed data so you can verify the connection tonight
+ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS sync_day DATE;
+CREATE UNIQUE INDEX IF NOT EXISTS metric_snapshots_api_day_idx ON metric_snapshots(post_id,sync_day);
+CREATE INDEX IF NOT EXISTS metric_snapshots_latest_idx ON metric_snapshots(post_id,fetched_at DESC,snapshot_id DESC);
+CREATE TABLE IF NOT EXISTS instagram_sync_state (
+    post_id INT PRIMARY KEY REFERENCES campaign_posts(post_id) ON DELETE CASCADE,
+    last_attempt_at TIMESTAMPTZ,
+    last_success_at TIMESTAMPTZ,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    lease_until TIMESTAMPTZ,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    failure_count INT NOT NULL DEFAULT 0,
+    last_error TEXT
+);
+CREATE TABLE IF NOT EXISTS instagram_api_calls (
+    call_id BIGSERIAL PRIMARY KEY,
+    ambassador_id INT NOT NULL,
+    called_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS instagram_api_calls_time_idx ON instagram_api_calls(called_at,ambassador_id);
+CREATE TABLE IF NOT EXISTS instagram_api_cooldowns (
+    scope TEXT PRIMARY KEY,
+    paused_until TIMESTAMPTZ,
+    usage_percent NUMERIC,
+    reason TEXT
+);
+CREATE TABLE IF NOT EXISTS monthly_sync_runs (
+    report_month DATE PRIMARY KEY,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMPTZ,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    last_error TEXT
+);
+
+-- Keep legacy platform records intact while limiting the running portal to Instagram.
+CREATE OR REPLACE VIEW instagram_social_accounts AS SELECT * FROM social_accounts WHERE platform='INSTAGRAM';
+CREATE OR REPLACE VIEW instagram_campaign_posts AS SELECT * FROM campaign_posts WHERE platform='INSTAGRAM';
+CREATE OR REPLACE VIEW instagram_metric_snapshots AS
+    SELECT ms.* FROM metric_snapshots ms JOIN instagram_campaign_posts cp USING(post_id)
+    JOIN campaigns c USING(campaign_id)
+    WHERE ms.fetched_at<((c.end_date+1)::TIMESTAMP AT TIME ZONE 'Asia/Kolkata');
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS campaign_ranking_snapshots (
+    campaign_id INT NOT NULL REFERENCES campaigns(campaign_id),
+    ambassador_id INT NOT NULL REFERENCES ambassadors(ambassador_id),
+    rank INT NOT NULL,
+    normalized_score NUMERIC(5,2) NOT NULL,
+    percentile_rank NUMERIC(5,2) NOT NULL,
+    star_rating INT NOT NULL,
+    total_reach BIGINT NOT NULL,
+    total_engagements BIGINT NOT NULL,
+    published_posts INT NOT NULL,
+    calculated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(campaign_id,ambassador_id)
+);
+CREATE INDEX IF NOT EXISTS ambassador_ratings_campaign_latest_idx
+    ON ambassador_ratings(campaign_id,ambassador_id,calculated_at DESC,rating_id DESC);
+UPDATE ambassadors a SET status=CASE WHEN EXISTS(
+    SELECT 1 FROM instagram_social_accounts s WHERE s.ambassador_id=a.ambassador_id AND s.verified)
+    THEN 'ACTIVE' ELSE 'PENDING' END WHERE a.left_at IS NULL AND a.status<>'LEFT';
+
+CREATE TABLE group_notice_dispatches (
+    request_id UUID PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 INSERT INTO users (full_name, email, role) VALUES
     ('Test Ambassador One', 'amb1@test.com', 'AMBASSADOR'),
     ('Test Ambassador Two', 'amb2@test.com', 'AMBASSADOR'),

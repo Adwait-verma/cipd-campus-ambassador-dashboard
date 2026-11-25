@@ -52,8 +52,7 @@ export default function CampaignDetailPage() {
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [submission, setSubmission] = useState<Submission | null>(null);
 
-  const [platform, setPlatform] =
-    useState<"INSTAGRAM" | "LINKEDIN">("INSTAGRAM");
+  const platform = "INSTAGRAM";
 
   const [postUrl, setPostUrl] = useState("");
   const [loading, setLoading] = useState(true);
@@ -307,8 +306,8 @@ export default function CampaignDetailPage() {
                 Publish during the campaign dates shown above.
                 {campaign.mandatory_hashtag ? ` Include ${campaign.mandatory_hashtag} in your post.` : " No mandatory hashtag is specified."}
               </li>
-              <li>Submit the direct Instagram or LinkedIn post URL, rather than your profile URL or this dashboard’s address. Select the matching platform.</li>
-              <li>Keep your post’s metrics available for admin review. After verification, the admin must calculate the campaign ratings.</li>
+              <li>Submit the direct Instagram post URL from your connected account, rather than a profile URL or this dashboard’s address.</li>
+              <li>Keep your Instagram connection active. Metrics and ratings update automatically; check Performance after the next scheduled update.</li>
             </ol>
           </div>
 
@@ -337,16 +336,11 @@ export default function CampaignDetailPage() {
 
               <select
                 value={platform}
-                onChange={(e) =>
-                  setPlatform(
-                    e.target.value as "INSTAGRAM" | "LINKEDIN"
-                  )
-                }
+                aria-label="Instagram campaign platform"
                 disabled={!canSubmit}
                 className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-[#54B9B4] disabled:bg-gray-100"
               >
                 <option value="INSTAGRAM">Instagram</option>
-                <option value="LINKEDIN">LinkedIn</option>
               </select>
             </div>
 
@@ -359,7 +353,7 @@ export default function CampaignDetailPage() {
                 value={postUrl}
                 onChange={(e) => setPostUrl(e.target.value)}
                 disabled={!canSubmit}
-                placeholder={platform === "LINKEDIN" ? "https://www.linkedin.com/posts/..." : "https://www.instagram.com/p/..."}
+                placeholder="https://www.instagram.com/p/..."
                 className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-[#54B9B4] disabled:bg-gray-100"
               />
             </div>
@@ -389,7 +383,7 @@ export default function CampaignDetailPage() {
             <p className="mt-4 font-semibold text-[#202629]">{progress.title}</p>
             <p className="mt-2 text-sm leading-6 text-gray-600">{progress.detail}</p>
             <ol aria-label="Submission stages" className="mt-4 space-y-2 text-sm text-gray-600">
-              {["Post submitted", "Metrics verified", "Campaign rated"].map((step, index) => (
+              {["Post submitted", "Instagram metrics received", "Campaign rated"].map((step, index) => (
                 <li key={step} className="flex items-center gap-2">
                   <span aria-hidden="true" className={progress.stage > index ? "font-bold text-[#238C89]" : "text-gray-500"}>
                     {progress.stage > index ? "✓" : "○"}
@@ -490,8 +484,8 @@ export default function CampaignDetailPage() {
             <p className="mt-2 text-sm leading-6 text-gray-500">
               Connecting a social account is a manual prototype step, not real
               OAuth ownership verification. An ACTIVE ambassador’s post enters
-              scoring only after admin metric verification and an explicit
-              campaign rating calculation.
+              scoring after Instagram returns complete metrics. Ratings update
+              automatically and become fixed after the campaign closes.
             </p>
           </div>
         </div>

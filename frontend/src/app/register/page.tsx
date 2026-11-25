@@ -123,7 +123,7 @@ export default function RegisterPage() {
 
             <p className="mt-6 text-base leading-7 text-gray-300">
               Join the Campus Ambassador programme, promote official campaigns,
-              connect your social platforms and build a measurable record of
+              connect your Instagram account and build a measurable record of
               your impact.
             </p>
 
@@ -267,7 +267,7 @@ export default function RegisterPage() {
 
                   <div className="mt-2 flex h-[46px] items-center rounded-xl border border-[#E5DFF6] bg-[#F6F3FC] px-4">
                     <span className="text-sm font-semibold text-[#735FC7]">
-                      Pending social verification
+                      Pending Instagram connection
                     </span>
                   </div>
                 </div>
@@ -319,7 +319,7 @@ export default function RegisterPage() {
 
                   <p className="mt-2 text-sm leading-6 text-gray-500">
                     Your account has been saved successfully. Your ambassador
-                    profile is currently pending social verification. Your
+                    profile is currently pending Instagram verification. Your
                     onboarding guide has been queued for email, including the
                     WhatsApp group invite if it is available. Email delivery
                     depends on the portal&apos;s mail configuration.
@@ -354,8 +354,8 @@ export default function RegisterPage() {
 
               <p className="mt-2 text-sm leading-6 text-gray-500">
                 Registration creates your account and Campus Ambassador
-                profile. However, only users with at least one connected and
-                verified supported social media account will be treated as
+                profile. However, only users with a connected and
+                verified Instagram account will be treated as
                 active ambassadors for campaign metrics, normalization,
                 leaderboard ranking and awards.
               </p>

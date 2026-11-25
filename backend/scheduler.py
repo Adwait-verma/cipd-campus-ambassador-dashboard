@@ -5,20 +5,17 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from notifications import deliver_pending, queue_previous_month
+from notifications import deliver_pending
 
 logger = logging.getLogger(__name__)
 
 
-def start_scheduler(engine):
+def start_scheduler(engine, instagram_sync):
     scheduler = BackgroundScheduler(timezone=ZoneInfo("Asia/Kolkata"))
     scheduler.add_job(
-        queue_previous_month,
-        "cron",
-        day=1,
-        hour=9,
-        minute=0,
-        args=[engine],
+        instagram_sync.prepare_monthly,
+        "interval",
+        minutes=15,
         id="monthly_reports",
         max_instances=1,
         coalesce=True,
@@ -32,10 +29,12 @@ def start_scheduler(engine):
         max_instances=1,
         coalesce=True,
     )
-    # Catch up after downtime. A unique database key prevents duplicate reports.
-    try:
-        queue_previous_month(engine)
-    except Exception:
-        logger.exception("Could not queue the previous month's reports")
+    scheduler.add_job(instagram_sync.run_tick, 'interval', minutes=1,
+                      id='instagram_metrics', max_instances=1, coalesce=True)
+    # Catch up after downtime without blocking startup; reports wait for fresh data.
+    from datetime import datetime, timedelta, timezone
+    scheduler.add_job(instagram_sync.prepare_monthly, 'date',
+                      run_date=datetime.now(timezone.utc)+timedelta(seconds=10),
+                      id='monthly_catchup')
     scheduler.start()
     return scheduler

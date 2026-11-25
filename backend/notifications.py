@@ -54,17 +54,17 @@ def welcome_email_body(full_name: str, invite_url: str | None) -> str:
     body = (
         f"Hello {full_name},\n\n"
         "Welcome to the CiPD Campus Ambassador Programme! Your account is ready. "
-        "You can explore campaigns now; scoring eligibility starts after at least "
-        "one social account is verified.\n\n"
+        "You can explore campaigns now; scoring eligibility starts after your "
+        "Instagram account is verified.\n\n"
         "YOUR NEXT STEPS\n"
         "1. Sign in and complete your ambassador profile.\n"
-        "2. Connect a supported social account and complete verification.\n"
+        "2. Connect your Instagram Business or Creator account.\n"
         "3. Open a campaign and read its dates, official content URL, "
         "required hashtag and full guidelines.\n"
-        "4. Publish your post on a connected platform during the campaign.\n"
+        "4. Publish your post on your connected Instagram account during the campaign.\n"
         "5. Submit the direct URL of your published post on the campaign page.\n"
-        "6. The admin checks the post and records verified metrics, then runs "
-        "the campaign rating calculation. Your rank and stars appear in Performance.\n\n"
+        "6. Instagram metrics and campaign ratings update automatically. "
+        "See Performance for overall and campaign results; campaign rankings are fixed after closing.\n\n"
     )
     if invite_url:
         body += f"OFFICIAL WHATSAPP GROUP\nJoin using the admin-provided invite: {invite_url}\n\n"
@@ -77,6 +77,9 @@ def welcome_email_body(full_name: str, invite_url: str | None) -> str:
 
 
 def queue_welcome_email(conn, user_id: int, full_name: str, invite_url: str | None) -> bool:
+    # Login backfill must not create mail for a departed member.
+    if conn.execute(text("SELECT EXISTS(SELECT 1 FROM ambassadors WHERE user_id=:id AND left_at IS NOT NULL)"), {'id': user_id}).scalar():
+        return False
     result = conn.execute(text("""
         INSERT INTO email_outbox (user_id, kind, subject, body)
         VALUES (:user_id, 'WELCOME', :subject, :body)
@@ -106,6 +109,7 @@ def queue_broadcast(
         SELECT user_id, full_name FROM users
         WHERE role = 'AMBASSADOR' AND password_hash IS NOT NULL
           AND (:recipient_user_id IS NULL OR user_id = :recipient_user_id)
+          AND EXISTS (SELECT 1 FROM ambassadors a WHERE a.user_id=users.user_id AND a.left_at IS NULL AND a.status IN ('ACTIVE','PENDING'))
         ORDER BY user_id
     """), {"recipient_user_id": recipient_user_id}).fetchall()
     for recipient in recipients:
@@ -149,11 +153,11 @@ def campaign_email_body(
         f"Required hashtag: {hashtag}\n\n"
         f"BRIEF AND GUIDELINES\n{description}\n\n"
         "WHAT TO DO\n"
-        "1. Read the full brief and confirm your social account is connected.\n"
-        "2. Publish on a supported platform during the campaign dates, "
+        "1. Read the full brief and confirm your Instagram account is connected.\n"
+        "2. Publish on Instagram during the campaign dates, "
         "following the guidelines and required hashtag.\n"
         "3. Submit the direct URL of your published post on the campaign page.\n"
-        "4. The admin verifies post metrics and runs the campaign rating calculation.\n\n"
+        "4. Instagram metrics and campaign ratings update automatically. Check Performance after the next update.\n\n"
         f"Open campaign: {page_url}\n\n"
         "CiPD Campus Ambassador Programme\n"
         "You received this announcement because you registered as an ambassador."
@@ -164,6 +168,7 @@ def queue_campaign_notifications(conn, campaign: dict) -> int:
     recipients = conn.execute(text("""
         SELECT user_id, full_name FROM users
         WHERE role = 'AMBASSADOR' AND password_hash IS NOT NULL
+          AND EXISTS (SELECT 1 FROM ambassadors a WHERE a.user_id=users.user_id AND a.left_at IS NULL AND a.status IN ('ACTIVE','PENDING'))
         ORDER BY user_id
     """)).fetchall()
     subject = campaign_email_subject(campaign)
@@ -253,8 +258,8 @@ def monthly_metrics(conn, month: date) -> list[dict]:
     """Return monthly verified metrics plus the latest stored normalized rating."""
     rows = conn.execute(text("""
         WITH month_posts AS (
-            SELECT cp.post_id, cp.ambassador_id, cp.platform
-            FROM campaign_posts cp
+            SELECT cp.post_id, cp.ambassador_id, cp.platform, cp.campaign_id
+            FROM instagram_campaign_posts cp
             WHERE cp.is_verified = TRUE
               AND cp.published_at >= :month_start
               AND cp.published_at < :month_end
@@ -262,9 +267,10 @@ def monthly_metrics(conn, month: date) -> list[dict]:
             SELECT DISTINCT ON (ms.post_id)
                 ms.post_id, ms.reach_count, ms.likes_count,
                 ms.comments_count, ms.shares_count, ms.saves_count
-            FROM metric_snapshots ms
+            FROM instagram_metric_snapshots ms
             JOIN month_posts mp ON mp.post_id = ms.post_id
-            WHERE ms.fetched_at < :month_end
+            WHERE ms.fetched_at <= LEAST(CURRENT_TIMESTAMP,
+                (SELECT ((c.end_date+1)::TIMESTAMP AT TIME ZONE 'Asia/Kolkata') FROM campaigns c WHERE c.campaign_id=mp.campaign_id))
             ORDER BY ms.post_id, ms.fetched_at DESC, ms.snapshot_id DESC
         ), latest_ratings AS (
             SELECT DISTINCT ON (ar.ambassador_id)
@@ -273,7 +279,7 @@ def monthly_metrics(conn, month: date) -> list[dict]:
                 ar.percentile_rank,
                 ar.star_rating
             FROM ambassador_ratings ar
-            WHERE ar.calculated_at < :month_end
+            WHERE ar.calculated_at <= CURRENT_TIMESTAMP
             ORDER BY ar.ambassador_id, ar.calculated_at DESC, ar.rating_id DESC
         ), ranked_ratings AS (
             SELECT *, RANK() OVER (
@@ -295,6 +301,7 @@ def monthly_metrics(conn, month: date) -> list[dict]:
         LEFT JOIN latest_snapshots ls ON ls.post_id = mp.post_id
         LEFT JOIN ranked_ratings lr ON lr.ambassador_id = a.ambassador_id
         WHERE u.role = 'AMBASSADOR' AND u.password_hash IS NOT NULL
+          AND a.left_at IS NULL AND a.status IN ('ACTIVE','PENDING')
           AND u.created_at < :month_end
         GROUP BY u.user_id, a.ambassador_id, u.full_name,
             lr.normalized_score, lr.percentile_rank, lr.star_rating,
@@ -304,8 +311,8 @@ def monthly_metrics(conn, month: date) -> list[dict]:
 
     platform_rows = conn.execute(text("""
         WITH month_posts AS (
-            SELECT cp.post_id, cp.ambassador_id, cp.platform
-            FROM campaign_posts cp
+            SELECT cp.post_id, cp.ambassador_id, cp.platform, cp.campaign_id
+            FROM instagram_campaign_posts cp
             WHERE cp.is_verified = TRUE
               AND cp.published_at >= :month_start
               AND cp.published_at < :month_end
@@ -313,9 +320,10 @@ def monthly_metrics(conn, month: date) -> list[dict]:
             SELECT DISTINCT ON (ms.post_id)
                 ms.post_id, ms.reach_count, ms.likes_count,
                 ms.comments_count, ms.shares_count, ms.saves_count
-            FROM metric_snapshots ms
+            FROM instagram_metric_snapshots ms
             JOIN month_posts mp ON mp.post_id = ms.post_id
-            WHERE ms.fetched_at < :month_end
+            WHERE ms.fetched_at <= LEAST(CURRENT_TIMESTAMP,
+                (SELECT ((c.end_date+1)::TIMESTAMP AT TIME ZONE 'Asia/Kolkata') FROM campaigns c WHERE c.campaign_id=mp.campaign_id))
             ORDER BY ms.post_id, ms.fetched_at DESC, ms.snapshot_id DESC
         )
         SELECT mp.ambassador_id, mp.platform,
@@ -336,14 +344,20 @@ def monthly_metrics(conn, month: date) -> list[dict]:
         item = dict(platform_row._mapping)
         platforms_by_ambassador.setdefault(item.pop("ambassador_id"), []).append(item)
 
+    from rankings import overall_rows
+    overall = {row['ambassador_id']:row for row in overall_rows(conn)}
     result = []
     for row in rows:
         item = dict(row._mapping)
+        rating = overall.get(item['ambassador_id'])
+        for key in ('normalized_score','percentile_rank','star_rating'):
+            item[key] = rating[key] if rating else None
+        item['current_rank'] = rating['rank'] if rating else None
         item["platform_metrics"] = platforms_by_ambassador.get(
             item["ambassador_id"], []
         )
         result.append(item)
-    return result
+    return sorted(result,key=lambda row:(row['current_rank'] is None,row['current_rank'] or 0,row['user_id']))
 
 
 def format_platform_metrics(platforms: list[dict]) -> str:
@@ -371,19 +385,21 @@ def monthly_email_body(row: dict, label: str, benchmark: str) -> str:
     return (
         f"Hello {row['full_name']},\n\n"
         f"Here is your CiPD ambassador report for {label}.\n\n"
+        f"Prepared: {datetime.now(INDIA_TIME).strftime('%d %B %Y, %H:%M IST')}\n\n"
         "YOUR VERIFIED MONTHLY ACTIVITY\n"
         f"Total reach: {row['reach']:,}\n"
         f"Total engagements: {row['engagements']:,}\n"
         f"Verified campaign posts: {row['verified_posts']}\n\n"
         "BY SOCIAL PLATFORM\n"
         f"{format_platform_metrics(row['platform_metrics'])}\n\n"
-        "YOUR LATEST STORED RATING AS OF MONTH END\n"
+        "YOUR LATEST CALCULATED RATING\n"
         f"{rating}\n\n"
         "TOP 10 NORMALIZED LEADERBOARD BENCHMARK\n"
         f"{benchmark}\n\n"
         "Monthly activity uses posts published in this calendar month and their "
-        "latest admin-verified cumulative metrics recorded by month end. "
-        "Ratings are the latest stored calculations as of month end and may "
+        "latest verified cumulative metrics, with ended campaigns fixed at closing. "
+        "These are cumulative measurements, not a month-end snapshot or monthly growth. "
+        "Ratings are the latest stored calculations at report generation and may "
         "reflect campaigns outside this month. The top 10 is ordered by "
         "normalized score, not raw reach; platform figures show each leader's "
         "verified activity for this report month.\n\n"
@@ -404,14 +420,18 @@ def queue_monthly_reports(conn, month: date) -> int:
         f"{row['star_rating']} stars\n"
         f"{format_platform_metrics(row['platform_metrics'])}"
         for row in leaders
-    ) or "No calculated ambassador ratings were available by month end."
+    ) or "No calculated ambassador ratings were available at report generation."
     label = month.strftime("%B %Y")
     queued = 0
     for row in rows:
         result = conn.execute(text("""
             INSERT INTO email_outbox (user_id, kind, report_month, subject, body)
             VALUES (:user_id, 'MONTHLY_REPORT', :month, :subject, :body)
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (user_id, kind, COALESCE(campaign_id, -1),
+                COALESCE(report_month, DATE '0001-01-01'),
+                COALESCE(broadcast_id, -1), COALESCE(reset_request_id, -1))
+            DO UPDATE SET subject=EXCLUDED.subject,body=EXCLUDED.body
+            WHERE email_outbox.status IN ('PENDING','FAILED')
             RETURNING message_id
         """), {
             "user_id": row["user_id"], "month": month,
@@ -436,6 +456,9 @@ def deliver_pending(engine, limit: int = 100, include_older: bool = False) -> di
             WITH claim AS (
                 SELECT message_id FROM email_outbox
                 WHERE (:cutoff IS NULL OR created_at >= CAST(:cutoff AS TIMESTAMPTZ))
+                  AND (kind <> 'MONTHLY_REPORT' OR EXISTS (
+                      SELECT 1 FROM monthly_sync_runs r
+                      WHERE r.report_month=email_outbox.report_month AND r.status='READY'))
                   AND (status = 'PENDING'
                     OR (status = 'FAILED' AND attempts < 3
                         AND last_attempt_at < CURRENT_TIMESTAMP - INTERVAL '30 minutes')
@@ -448,13 +471,18 @@ def deliver_pending(engine, limit: int = 100, include_older: bool = False) -> di
             UPDATE email_outbox o SET status = 'SENDING',
                 attempts = attempts + 1, last_attempt_at = CURRENT_TIMESTAMP
             FROM claim WHERE o.message_id = claim.message_id
-            RETURNING o.message_id, o.user_id, o.subject, o.body
+            RETURNING o.message_id, o.user_id, o.subject, o.body, o.kind
         """), {"limit": limit, "cutoff": cutoff}).fetchall()
 
     sent = failed = 0
     for job in jobs:
         with engine.connect() as conn:
             recipient = conn.execute(text("SELECT email FROM users WHERE user_id = :id"), {"id": job.user_id}).scalar()
+            opted_out = conn.execute(text("SELECT EXISTS(SELECT 1 FROM ambassadors WHERE user_id=:id AND left_at IS NOT NULL)"), {'id': job.user_id}).scalar()
+        if opted_out and getattr(job, 'kind', 'WELCOME') not in ('PASSWORD_RESET', 'PASSWORD_CHANGED'):
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE email_outbox SET status='CANCELLED', last_error='Programme membership ended' WHERE message_id=:id"), {'id': job.message_id})
+            continue
         if not recipient:
             failure = "Recipient account no longer exists."
         else:

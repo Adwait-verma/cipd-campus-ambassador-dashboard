@@ -4,22 +4,27 @@ CiPD Ambassador Rating System — Backend
 Run:
     uvicorn main:app --reload
 """
+import base64
 import os
 import re
 import csv
 import io
 import hashlib
 import hmac
+import json
 import secrets
+import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
-from urllib.parse import urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 import jwt
+import requests
+from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, EmailStr
 from pwdlib import PasswordHash
 from sqlalchemy import create_engine, text
@@ -40,6 +45,9 @@ from notifications import (
     queue_welcome_email,
 )
 from scheduler import start_scheduler
+from workflows import activity_page, ensure_member
+from rankings import campaign_cutoff, freeze_campaign, overall_rows, ranking_page
+from zoneinfo import ZoneInfo
 
 load_dotenv()
 
@@ -60,7 +68,7 @@ password_hash = PasswordHash.recommended()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    scheduler = start_scheduler(engine)
+    scheduler = start_scheduler(engine, instagram_sync)
     try:
         yield
     finally:
@@ -79,6 +87,222 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Instagram OAuth (Instagram API with Instagram Login — Business/Creator
+# accounts only; Meta shut down the old Basic Display API in Dec 2024).
+# ---------------------------------------------------------------------------
+INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID")
+INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET")
+INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI")
+FRONTEND_URL = (
+    os.getenv("FRONTEND_URL")
+    or os.getenv("PUBLIC_FRONTEND_URL", "http://localhost:3000")
+).rstrip("/")
+TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY")
+
+# How long an ambassador has to finish the Instagram consent screen
+# before the signed state we handed them stops being accepted.
+OAUTH_STATE_TTL_SECONDS = 600
+
+
+def _get_fernet() -> Fernet:
+    if not TOKEN_ENCRYPTION_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "TOKEN_ENCRYPTION_KEY is not set in the .env file. "
+                "Generate one with: python -c \"from cryptography.fernet "
+                "import Fernet; print(Fernet.generate_key().decode())\""
+            ),
+        )
+    try:
+        return Fernet(TOKEN_ENCRYPTION_KEY.encode())
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="TOKEN_ENCRYPTION_KEY is invalid.",
+        )
+
+
+def encrypt_token(raw_token: str) -> str:
+    """Social access tokens are never stored in plaintext (see schema.sql)."""
+    return _get_fernet().encrypt(raw_token.encode()).decode()
+
+
+def decrypt_token(encrypted_token: str) -> str:
+    try:
+        return _get_fernet().decrypt(encrypted_token.encode()).decode()
+    except InvalidToken:
+        raise HTTPException(
+            status_code=500,
+            detail="Stored access token could not be decrypted.",
+        )
+
+
+def create_oauth_state(user_id: int) -> str:
+    """
+    Signs a short-lived, tamper-proof value carrying the ambassador's
+    user_id through the Instagram redirect round-trip. A browser
+    redirect can't carry our normal Authorization header, so this
+    signed state is what authenticates the callback instead.
+    """
+    payload_b64 = base64.urlsafe_b64encode(
+        json.dumps({
+            "user_id": user_id,
+            "nonce": secrets.token_urlsafe(12),
+            "issued_at": int(time.time()),
+        }).encode()
+    ).decode()
+
+    signature = hmac.new(
+        JWT_SECRET.encode(), payload_b64.encode(), hashlib.sha256
+    ).hexdigest()
+
+    return f"{payload_b64}.{signature}"
+
+
+def verify_oauth_state(state: str) -> int:
+    try:
+        payload_b64, signature = state.split(".", 1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state.")
+
+    expected_signature = hmac.new(
+        JWT_SECRET.encode(), payload_b64.encode(), hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature, expected_signature):
+        raise HTTPException(
+            status_code=400, detail="Invalid OAuth state signature."
+        )
+
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64.encode()))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state.")
+
+    if time.time() - payload["issued_at"] > OAUTH_STATE_TTL_SECONDS:
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth session expired. Please try connecting again.",
+        )
+
+    return int(payload["user_id"])
+
+
+def get_valid_instagram_token(ambassador_id: int, conn) -> str:
+    """
+    Returns a live Instagram access token for this ambassador,
+    transparently refreshing the long-lived token if it's close to
+    expiring (Instagram long-lived tokens last ~60 days).
+    """
+    row = conn.execute(
+        text("""
+            SELECT access_token, token_expires_at
+            FROM social_accounts
+            WHERE ambassador_id = :ambassador_id
+              AND platform = 'INSTAGRAM'
+              AND verified = TRUE
+        """),
+        {"ambassador_id": ambassador_id},
+    ).fetchone()
+
+    if not row or not row._mapping["access_token"]:
+        raise HTTPException(
+            status_code=404,
+            detail="No verified Instagram account connected for this ambassador.",
+        )
+
+    access_token = decrypt_token(row._mapping["access_token"])
+    expires_at = row._mapping["token_expires_at"]
+
+    if expires_at and expires_at - datetime.now(timezone.utc) < timedelta(days=5):
+        try:
+            refresh_response = requests.get(
+                "https://graph.instagram.com/refresh_access_token",
+                params={
+                    "grant_type": "ig_refresh_token",
+                    "access_token": access_token,
+                },
+                timeout=15,
+            )
+            refresh_response.raise_for_status()
+            refresh_data = refresh_response.json()
+            access_token = refresh_data["access_token"]
+
+            conn.execute(
+                text("""
+                    UPDATE social_accounts
+                    SET access_token = :access_token,
+                        token_expires_at = :token_expires_at,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE ambassador_id = :ambassador_id
+                      AND platform = 'INSTAGRAM'
+                """),
+                {
+                    "access_token": encrypt_token(access_token),
+                    "token_expires_at": datetime.now(timezone.utc)
+                    + timedelta(seconds=refresh_data.get("expires_in", 60 * 24 * 60 * 60)),
+                    "ambassador_id": ambassador_id,
+                },
+            )
+        except requests.RequestException:
+            # Refresh failed â€” fall back to the still-valid existing token
+            # rather than failing the whole request.
+            pass
+
+    return access_token
+
+
+def _normalize_permalink(url: str) -> str:
+    # Instagram's "Copy Link" share action appends a ?stkn=... tracking
+    # token that isn't present in the canonical permalink the Graph API
+    # returns, so strip query string/fragment before comparing.
+    return url.split("?")[0].split("#")[0].rstrip("/")
+
+
+def resolve_instagram_media_id(access_token: str, post_url: str) -> str:
+    """
+    The Graph API only returns media the authenticated professional
+    account owns, and only by internal media ID â€” there's no endpoint
+    to resolve a public post URL to that ID directly. We page through
+    the account's own media and match on permalink.
+    """
+    normalized_target = _normalize_permalink(post_url)
+    url = "https://graph.instagram.com/me/media"
+    params = {
+        "fields": "id,permalink",
+        "access_token": access_token,
+        "limit": 50,
+    }
+
+    for _ in range(10):  # cap pagination so a bad match can't loop forever
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        for item in data.get("data", []):
+            if _normalize_permalink(item.get("permalink", "")) == normalized_target:
+                return item["id"]
+
+        next_page = data.get("paging", {}).get("next")
+        if not next_page:
+            break
+
+        url = next_page
+        params = None  # "next" URL already includes all query params
+
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            "Could not find this post on the connected Instagram account. "
+            "The submitted URL must match a post published from the "
+            "connected professional account."
+        ),
+    )
+
+
 def get_current_user(authorization: str | None = Header(default=None)):
     if not authorization:
         raise HTTPException(
@@ -205,7 +429,7 @@ def log_admin_activity(
         "action": action,
         "entity_type": entity_type,
         "entity_id": entity_id,
-        "summary": summary,
+        "summary": ("Scheduled: " if current_user.get("role") == "SYSTEM" else "") + summary,
     })
 
 
@@ -504,6 +728,7 @@ def get_notification_recipients(
             SELECT user_id, full_name, email
             FROM users
             WHERE role = 'AMBASSADOR' AND password_hash IS NOT NULL
+              AND EXISTS (SELECT 1 FROM ambassadors a WHERE a.user_id=users.user_id AND a.left_at IS NULL AND a.status IN ('ACTIVE','PENDING'))
             ORDER BY LOWER(full_name), user_id
         """)).fetchall()
     return {"ambassadors": [dict(row._mapping) for row in rows]}
@@ -512,20 +737,14 @@ def get_notification_recipients(
 @app.get("/admin/activity-logs")
 def get_admin_activity_logs(
     limit: int = 100,
+    page: int = 1,
+    action: str | None = None,
+    admin_user_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     current_user: dict = Depends(require_admin),
 ):
-    safe_limit = max(1, min(limit, 200))
-    with engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT l.activity_id, l.action, l.entity_type, l.entity_id,
-                l.summary, l.created_at, u.full_name AS admin_name,
-                u.email AS admin_email
-            FROM admin_activity_logs l
-            LEFT JOIN users u ON u.user_id = l.admin_user_id
-            ORDER BY l.created_at DESC, l.activity_id DESC
-            LIMIT :limit
-        """), {"limit": safe_limit}).fetchall()
-    return {"activities": [dict(row._mapping) for row in rows]}
+    return activity_page(engine, limit, page, action, admin_user_id, date_from, date_to)
 
 
 @app.get("/health")
@@ -1115,7 +1334,7 @@ def get_social_accounts(
                         follower_count,
                         verified,
                         updated_at
-                    FROM social_accounts
+                    FROM instagram_social_accounts
                     WHERE ambassador_id = :ambassador_id
                     ORDER BY platform
                 """),
@@ -1144,14 +1363,25 @@ def connect_social_account(
     current_user: dict = Depends(require_ambassador),
 ):
     require_own_user_id(data.user_id, current_user)
+    ensure_member(engine, current_user['user_id'])
 
     try:
         platform = data.platform.upper()
 
-        if platform not in {"INSTAGRAM", "LINKEDIN", "TWITTER"}:
+        if platform != "INSTAGRAM":
             raise HTTPException(
                 status_code=400,
-                detail="Unsupported social platform."
+                detail="This programme supports Instagram only. Use Connect Instagram."
+            )
+
+        if platform == "INSTAGRAM":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Instagram must be connected through Instagram OAuth "
+                    "now — use the 'Connect Instagram' button instead of "
+                    "manual connect."
+                ),
             )
 
         if not data.platform_user_id.strip():
@@ -1236,7 +1466,7 @@ def connect_social_account(
                 text("""
                     SELECT EXISTS (
                         SELECT 1
-                        FROM social_accounts
+                        FROM instagram_social_accounts
                         WHERE ambassador_id = :ambassador_id
                           AND verified = TRUE
                     )
@@ -1251,6 +1481,7 @@ def connect_social_account(
                     UPDATE ambassadors
                     SET status = :status
                     WHERE ambassador_id = :ambassador_id
+                      AND left_at IS NULL
                 """),
                 {
                     "status": new_status,
@@ -1281,6 +1512,7 @@ def disconnect_social_account(
     current_user: dict = Depends(require_ambassador),
 ):
     require_own_user_id(user_id, current_user)
+    instagram_sync.finalize_for_member(user_id)
 
     try:
         platform = platform.upper()
@@ -1326,7 +1558,7 @@ def disconnect_social_account(
                 text("""
                     SELECT EXISTS (
                         SELECT 1
-                        FROM social_accounts
+                        FROM instagram_social_accounts
                         WHERE ambassador_id = :ambassador_id
                           AND verified = TRUE
                     )
@@ -1341,6 +1573,7 @@ def disconnect_social_account(
                     UPDATE ambassadors
                     SET status = :status
                     WHERE ambassador_id = :ambassador_id
+                      AND left_at IS NULL
                 """),
                 {
                     "status": new_status,
@@ -1361,6 +1594,173 @@ def disconnect_social_account(
             status_code=500,
             detail=f"Failed to disconnect social account: {e}"
         )
+
+@app.get("/ambassador/social-accounts/instagram/authorize")
+def instagram_authorize(
+    current_user: dict = Depends(require_ambassador),
+):
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_REDIRECT_URI:
+        raise HTTPException(
+            status_code=500,
+            detail="Instagram integration is not configured on this server.",
+        )
+
+    params = {
+        "client_id": INSTAGRAM_APP_ID,
+        "redirect_uri": INSTAGRAM_REDIRECT_URI,
+        "response_type": "code",
+        # instagram_business_basic is the self-serve scope covering
+        # profile + media read access for Business/Creator accounts.
+        "scope": "instagram_business_basic",
+        "state": create_oauth_state(current_user["user_id"]),
+    }
+
+    return {
+        "authorize_url": "https://api.instagram.com/oauth/authorize?" + urlencode(params)
+    }
+
+
+@app.get("/ambassador/social-accounts/instagram/callback")
+def instagram_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    def redirect_with_error(message: str) -> RedirectResponse:
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/ambassador/social-accounts"
+                f"?instagram=error&message={quote(message)}"
+        )
+
+    if error:
+        return redirect_with_error(error_description or error)
+
+    if not code or not state:
+        return redirect_with_error(
+            "Instagram did not return an authorization code."
+        )
+
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET or not INSTAGRAM_REDIRECT_URI:
+        return redirect_with_error(
+            "Instagram integration is not configured on this server."
+        )
+
+    try:
+        user_id = verify_oauth_state(state)
+    except HTTPException as e:
+        return redirect_with_error(str(e.detail))
+
+    try:
+        # Step 1 â€” exchange the authorization code for a short-lived
+        # (1 hour) token.
+        token_response = requests.post(
+            "https://api.instagram.com/oauth/access_token",
+            data={
+                "client_id": INSTAGRAM_APP_ID,
+                "client_secret": INSTAGRAM_APP_SECRET,
+                "grant_type": "authorization_code",
+                "redirect_uri": INSTAGRAM_REDIRECT_URI,
+                "code": code,
+            },
+            timeout=15,
+        )
+        token_response.raise_for_status()
+        token_data = token_response.json()
+        short_lived_token = token_data["access_token"]
+
+        # Step 2 â€” exchange for a long-lived token (~60 days).
+        exchange_response = requests.get(
+            "https://graph.instagram.com/access_token",
+            params={
+                "grant_type": "ig_exchange_token",
+                "client_secret": INSTAGRAM_APP_SECRET,
+                "access_token": short_lived_token,
+            },
+            timeout=15,
+        )
+        exchange_response.raise_for_status()
+        exchange_data = exchange_response.json()
+        long_lived_token = exchange_data["access_token"]
+        expires_in_seconds = exchange_data.get("expires_in", 60 * 24 * 60 * 60)
+
+        # Step 3 â€” fetch the connected professional account's profile.
+        profile_response = requests.get(
+            "https://graph.instagram.com/me",
+            params={
+                "fields": "id,username,account_type,followers_count",
+                "access_token": long_lived_token,
+            },
+            timeout=15,
+        )
+        profile_response.raise_for_status()
+        profile_data = profile_response.json()
+
+    except requests.RequestException as e:
+        return redirect_with_error(f"Instagram connection failed: {e}")
+    except (KeyError, ValueError):
+        return redirect_with_error("Instagram returned an unexpected response.")
+
+    try:
+        with engine.begin() as conn:
+            ambassador = conn.execute(
+                text("SELECT ambassador_id FROM ambassadors WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            ).fetchone()
+
+            if not ambassador:
+                return redirect_with_error("Ambassador profile not found.")
+
+            ambassador_id = ambassador._mapping["ambassador_id"]
+
+            conn.execute(
+                text("""
+                    INSERT INTO social_accounts (
+                        ambassador_id, platform, platform_user_id,
+                        profile_handle, access_token, token_expires_at,
+                        follower_count, verified, updated_at
+                    )
+                    VALUES (
+                        :ambassador_id, 'INSTAGRAM', :platform_user_id,
+                        :profile_handle, :access_token, :token_expires_at,
+                        :follower_count, TRUE, CURRENT_TIMESTAMP
+                    )
+                    ON CONFLICT (ambassador_id, platform)
+                    DO UPDATE SET
+                        platform_user_id = EXCLUDED.platform_user_id,
+                        profile_handle = EXCLUDED.profile_handle,
+                        access_token = EXCLUDED.access_token,
+                        token_expires_at = EXCLUDED.token_expires_at,
+                        follower_count = EXCLUDED.follower_count,
+                        verified = TRUE,
+                        updated_at = CURRENT_TIMESTAMP
+                """),
+                {
+                    "ambassador_id": ambassador_id,
+                    "platform_user_id": str(profile_data["id"]),
+                    "profile_handle": profile_data.get("username", ""),
+                    "access_token": encrypt_token(long_lived_token),
+                    "token_expires_at": datetime.now(timezone.utc)
+                        + timedelta(seconds=expires_in_seconds),
+                    "follower_count": profile_data.get("followers_count", 0),
+                },
+            )
+
+            conn.execute(
+                text("""
+                    UPDATE ambassadors
+                    SET status = 'ACTIVE'
+                    WHERE ambassador_id = :ambassador_id
+                """),
+                {"ambassador_id": ambassador_id},
+            )
+    except Exception as e:
+        return redirect_with_error(f"Failed to save Instagram connection: {e}")
+
+    return RedirectResponse(
+        url=f"{FRONTEND_URL}/ambassador/social-accounts?instagram=connected"
+    )
+
 
 @app.get("/ambassador/dashboard-data/{user_id}")
 def get_ambassador_dashboard_data(
@@ -1419,7 +1819,7 @@ def get_ambassador_dashboard_data(
                             ms.reach_count,
                             ms.saves_count,
                             ms.fetched_at
-                        FROM metric_snapshots ms
+                        FROM instagram_metric_snapshots ms
                         ORDER BY
                             ms.post_id,
                             ms.fetched_at DESC,
@@ -1453,7 +1853,7 @@ def get_ambassador_dashboard_data(
                             0
                         ) AS total_saves
 
-                    FROM campaign_posts cp
+                    FROM instagram_campaign_posts cp
 
                     LEFT JOIN latest_snapshots ls
                         ON ls.post_id = cp.post_id
@@ -1485,79 +1885,13 @@ def get_ambassador_dashboard_data(
             # ---------------------------------------------------------
             # 3. Latest ambassador rating
             # ---------------------------------------------------------
-            rating = conn.execute(
-                text("""
-                    SELECT
-                        rating_id,
-                        campaign_id,
-                        normalized_score,
-                        percentile_rank,
-                        star_rating,
-                        calculated_at
-                    FROM ambassador_ratings
-                    WHERE ambassador_id = :ambassador_id
-                    ORDER BY calculated_at DESC, rating_id DESC
-                    LIMIT 1
-                """),
-                {"ambassador_id": ambassador_id},
-            ).fetchone()
-
-            rating_data = (
-                dict(rating._mapping)
-                if rating
-                else None
-            )
-
-            # ---------------------------------------------------------
-            # 4. Calculate actual ranking by normalized score
-            #
-            # We use each ambassador's latest rating.
-            # ---------------------------------------------------------
-            ranking = conn.execute(
-                text("""
-                    WITH latest_ratings AS (
-                        SELECT DISTINCT ON (ambassador_id)
-                            ambassador_id,
-                            normalized_score
-                        FROM ambassador_ratings
-                        ORDER BY
-                            ambassador_id,
-                            calculated_at DESC,
-                            rating_id DESC
-                    ),
-                    ranked AS (
-                        SELECT
-                            ambassador_id,
-                            normalized_score,
-                            RANK() OVER (
-                                ORDER BY normalized_score DESC
-                            ) AS current_rank,
-                            COUNT(*) OVER () AS total_ranked
-                        FROM latest_ratings
-                    )
-                    SELECT
-                        current_rank,
-                        total_ranked
-                    FROM ranked
-                    WHERE ambassador_id = :ambassador_id
-                """),
-                {"ambassador_id": ambassador_id},
-            ).fetchone()
-
-            if ranking:
-                ranking_data = {
-                    "current_rank": int(
-                        ranking._mapping["current_rank"]
-                    ),
-                    "total_ranked": int(
-                        ranking._mapping["total_ranked"]
-                    ),
-                }
-            else:
-                ranking_data = {
-                    "current_rank": None,
-                    "total_ranked": 0,
-                }
+            overall = [dict(row) for row in overall_rows(conn)]
+            rating_data = next((row for row in overall if row['ambassador_id']==ambassador_id),None)
+            ranking_data = {'current_rank':rating_data['rank'] if rating_data else None, 'total_ranked':len(overall)}
+            if rating_data:
+                total_reach = int(rating_data['total_reach'])
+                total_engagements = int(rating_data['total_engagements'])
+                engagement_rate = round(100*total_engagements/total_reach,2) if total_reach else 0
 
             # ---------------------------------------------------------
             # 5. Current active campaign
@@ -1602,7 +1936,7 @@ def get_ambassador_dashboard_data(
                             reach_count,
                             saves_count,
                             fetched_at
-                        FROM metric_snapshots
+                        FROM instagram_metric_snapshots
                         ORDER BY
                             post_id,
                             fetched_at DESC,
@@ -1623,7 +1957,7 @@ def get_ambassador_dashboard_data(
                         COALESCE(ls.shares_count, 0) AS shares_count,
                         COALESCE(ls.saves_count, 0) AS saves_count,
                         ls.fetched_at
-                    FROM campaign_posts cp
+                    FROM instagram_campaign_posts cp
 
                     JOIN campaigns c
                         ON c.campaign_id = cp.campaign_id
@@ -1663,7 +1997,7 @@ def get_ambassador_dashboard_data(
                 "total_reach": total_reach,
                 "engagement_rate": engagement_rate,
                 "published_posts": int(
-                    performance_data["published_posts"] or 0
+                    rating_data['published_posts'] if rating_data else performance_data["published_posts"] or 0
                 ),
                 "total_engagements": total_engagements,
             },
@@ -1704,6 +2038,7 @@ def get_ambassador_campaigns(
                         end_date,
                         is_active,
                         CASE
+                            WHEN is_active = FALSE THEN 'COMPLETED'
                             WHEN CURRENT_DATE < start_date THEN 'UPCOMING'
                             WHEN CURRENT_DATE > end_date THEN 'COMPLETED'
                             WHEN is_active = TRUE
@@ -1755,6 +2090,7 @@ def get_campaign_detail(
                         end_date,
                         is_active,
                         CASE
+                            WHEN is_active = FALSE THEN 'COMPLETED'
                             WHEN CURRENT_DATE < start_date THEN 'UPCOMING'
                             WHEN CURRENT_DATE > end_date THEN 'COMPLETED'
                             WHEN is_active = TRUE
@@ -1827,7 +2163,7 @@ def get_campaign_submission(
                             reach_count,
                             saves_count,
                             fetched_at
-                        FROM metric_snapshots
+                        FROM instagram_metric_snapshots
                         ORDER BY
                             post_id,
                             fetched_at DESC,
@@ -1849,8 +2185,10 @@ def get_campaign_submission(
                         a.status AS ambassador_status,
                         rating.calculated_at AS rating_calculated_at,
                         rating.star_rating AS rating_star_rating,
-                        campaign_metrics.latest_campaign_metrics_at
-                    FROM campaign_posts cp
+                        campaign_metrics.latest_campaign_metrics_at,
+                        c.finalized_at AS campaign_finalized_at
+                    FROM instagram_campaign_posts cp
+                    JOIN campaigns c USING(campaign_id)
                     LEFT JOIN latest_snapshot ls
                         ON ls.post_id = cp.post_id
                     JOIN ambassadors a ON a.ambassador_id = cp.ambassador_id
@@ -1864,8 +2202,8 @@ def get_campaign_submission(
                     ) rating ON TRUE
                     LEFT JOIN LATERAL (
                         SELECT MAX(ms.fetched_at) AS latest_campaign_metrics_at
-                        FROM metric_snapshots ms
-                        JOIN campaign_posts other_post ON other_post.post_id = ms.post_id
+                        FROM instagram_metric_snapshots ms
+                        JOIN instagram_campaign_posts other_post ON other_post.post_id = ms.post_id
                         JOIN ambassadors other_ambassador
                             ON other_ambassador.ambassador_id = other_post.ambassador_id
                         WHERE other_post.campaign_id = cp.campaign_id
@@ -1907,19 +2245,16 @@ def submit_campaign_post(
     current_user: dict = Depends(require_ambassador),
 ):
     require_own_user_id(data.user_id, current_user)
+    ensure_member(engine, current_user['user_id'])
 
     try:
         platform = data.platform.upper()
         post_url = data.post_url.strip().rstrip("/")
 
-        if platform not in {
-            "INSTAGRAM",
-            "LINKEDIN",
-            "TWITTER",
-        }:
+        if platform != "INSTAGRAM":
             raise HTTPException(
                 status_code=400,
-                detail="Unsupported platform.",
+                detail="This programme accepts Instagram posts only.",
             )
 
         if not post_url:
@@ -2000,7 +2335,7 @@ def submit_campaign_post(
                     detail="Campaign not found.",
                 )
 
-            today = date.today()
+            today = datetime.now(ZoneInfo('Asia/Kolkata')).date()
 
             campaign_start = campaign._mapping["start_date"]
             campaign_end = campaign._mapping["end_date"]
@@ -2030,7 +2365,7 @@ def submit_campaign_post(
             connected_account = conn.execute(
                 text("""
                     SELECT account_id
-                    FROM social_accounts
+                    FROM instagram_social_accounts
                     WHERE ambassador_id = :ambassador_id
                       AND platform = :platform
                       AND verified = TRUE
@@ -2059,7 +2394,7 @@ def submit_campaign_post(
                     SELECT
                         post_id,
                         post_url
-                    FROM campaign_posts
+                    FROM instagram_campaign_posts
                     WHERE campaign_id = :campaign_id
                       AND ambassador_id = :ambassador_id
                       AND platform = :platform
@@ -2159,7 +2494,7 @@ def export_admin_ambassadors_csv(
                         CASE WHEN verified THEN ' (verified)' ELSE ' (pending)' END,
                         '; ' ORDER BY platform
                     ) AS social_accounts
-                FROM social_accounts
+                FROM instagram_social_accounts
                 GROUP BY ambassador_id
             )
             SELECT u.full_name, u.email, u.phone_number,
@@ -2222,7 +2557,7 @@ def get_admin_ambassadors(
                             ms.shares_count,
                             ms.saves_count,
                             ms.fetched_at
-                        FROM metric_snapshots ms
+                        FROM instagram_metric_snapshots ms
                         ORDER BY
                             ms.post_id,
                             ms.fetched_at DESC,
@@ -2233,7 +2568,7 @@ def get_admin_ambassadors(
                         SELECT
                             cp.ambassador_id,
                             COALESCE(SUM(ls.reach_count), 0) AS total_reach
-                        FROM campaign_posts cp
+                        FROM instagram_campaign_posts cp
                         LEFT JOIN latest_snapshots ls
                             ON ls.post_id = cp.post_id
                         GROUP BY cp.ambassador_id
@@ -2261,7 +2596,7 @@ def get_admin_ambassadors(
                                 ORDER BY sa.platform
                             ) FILTER (WHERE sa.verified = TRUE)
                                 AS platforms
-                        FROM social_accounts sa
+                        FROM instagram_social_accounts sa
                         GROUP BY sa.ambassador_id
                     )
 
@@ -2364,7 +2699,7 @@ def get_admin_ambassador_detail(
                         follower_count,
                         verified,
                         updated_at
-                    FROM social_accounts
+                    FROM instagram_social_accounts
                     WHERE ambassador_id = :ambassador_id
                     ORDER BY platform
                 """),
@@ -2389,7 +2724,7 @@ def get_admin_ambassador_detail(
                             ms.views_impressions,
                             ms.reach_count,
                             ms.saves_count
-                        FROM metric_snapshots ms
+                        FROM instagram_metric_snapshots ms
                         ORDER BY
                             ms.post_id,
                             ms.fetched_at DESC,
@@ -2426,7 +2761,7 @@ def get_admin_ambassador_detail(
                         COALESCE(ls.views_impressions, 0)
                             AS views_impressions
 
-                    FROM campaign_posts cp
+                    FROM instagram_campaign_posts cp
 
                     JOIN campaigns c
                         ON c.campaign_id = cp.campaign_id
@@ -2589,9 +2924,9 @@ def verify_campaign_post(
 
             post = conn.execute(
                 text("""
-                    SELECT post_id
-                    FROM campaign_posts
-                    WHERE post_id = :post_id
+                    SELECT cp.post_id,cp.campaign_id,c.end_date,c.finalized_at
+                    FROM instagram_campaign_posts cp JOIN campaigns c USING(campaign_id)
+                    WHERE cp.post_id = :post_id
                 """),
                 {"post_id": post_id},
             ).fetchone()
@@ -2601,6 +2936,12 @@ def verify_campaign_post(
                     status_code=404,
                     detail="Campaign post not found."
                 )
+
+            conn.execute(text('SELECT pg_advisory_xact_lock(826033,:id)'), {'id':post.campaign_id})
+            closed = conn.execute(text("""SELECT finalized_at IS NOT NULL OR end_date<
+                (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::DATE FROM campaigns WHERE campaign_id=:id"""), {'id':post.campaign_id}).scalar()
+            if closed:
+                raise HTTPException(409,'Campaign has ended; its metrics and ranking are fixed.')
 
             conn.execute(
                 text("""
@@ -2676,94 +3017,24 @@ def verify_campaign_post(
             status_code=500,
             detail=f"Failed to verify post: {e}"
         )
-@app.get("/ambassador/leaderboard")
-def get_ambassador_leaderboard(
-    current_user: dict = Depends(require_ambassador),
+@app.post("/admin/campaign-posts/{post_id}/sync-instagram-metrics")
+def sync_instagram_metrics(
+    post_id: int,
+    current_user: dict = Depends(require_admin),
 ):
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(
-                text("""
-                    WITH latest_ratings AS (
-                        SELECT DISTINCT ON (ambassador_id)
-                            ambassador_id,
-                            normalized_score,
-                            percentile_rank,
-                            star_rating,
-                            calculated_at
-                        FROM ambassador_ratings
-                        ORDER BY
-                            ambassador_id,
-                            calculated_at DESC,
-                            rating_id DESC
-                    ),
+    result = instagram_sync.sync_post(post_id, force=True)
+    if result["changed"]:
+        instagram_sync.recalculate(result["campaign_id"])
+    with engine.begin() as conn:
+        log_admin_activity(conn, current_user, "CAMPAIGN_POST_SYNCED_INSTAGRAM",
+                           f"Synced Instagram metrics for post #{post_id}.", "campaign_post", post_id)
+    return result
 
-                    latest_snapshots AS (
-                        SELECT DISTINCT ON (post_id)
-                            post_id,
-                            reach_count
-                        FROM metric_snapshots
-                        ORDER BY
-                            post_id,
-                            fetched_at DESC,
-                            snapshot_id DESC
-                    ),
-
-                    ambassador_reach AS (
-                        SELECT
-                            cp.ambassador_id,
-                            COALESCE(
-                                SUM(ls.reach_count),
-                                0
-                            ) AS total_reach
-                        FROM campaign_posts cp
-                        LEFT JOIN latest_snapshots ls
-                            ON ls.post_id = cp.post_id
-                        WHERE cp.is_verified = TRUE
-                        GROUP BY cp.ambassador_id
-                    )
-
-                    SELECT
-                        a.ambassador_id,
-                        a.user_id,
-                        u.full_name,
-                        a.college_name,
-                        COALESCE(ar.total_reach, 0) AS total_reach,
-                        lr.normalized_score,
-                        lr.percentile_rank,
-                        lr.star_rating,
-                        RANK() OVER (
-                            ORDER BY
-                                lr.normalized_score DESC,
-                                a.ambassador_id ASC
-                        ) AS current_rank
-                    FROM latest_ratings lr
-                    JOIN ambassadors a
-                        ON a.ambassador_id = lr.ambassador_id
-                    JOIN users u
-                        ON u.user_id = a.user_id
-                    LEFT JOIN ambassador_reach ar
-                        ON ar.ambassador_id = a.ambassador_id
-                    WHERE a.status = 'ACTIVE'
-                    ORDER BY
-                        current_rank ASC,
-                        a.ambassador_id ASC
-                """)
-            ).fetchall()
-
-        return {
-            "total_ranked": len(rows),
-            "leaderboard": [
-                dict(row._mapping)
-                for row in rows
-            ],
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load leaderboard: {e}",
-        )
+@app.get("/ambassador/leaderboard")
+def get_ambassador_leaderboard(current_user: dict = Depends(require_ambassador)):
+    with engine.connect() as conn:
+        rows = [dict(row, current_rank=row['rank']) for row in overall_rows(conn)]
+    return {'total_ranked':len(rows), 'leaderboard':rows}
 
 
 @app.get("/admin/campaigns/{campaign_id}")
@@ -2785,6 +3056,7 @@ def get_admin_campaign_detail(
                         end_date,
                         is_active,
                         CASE
+                            WHEN is_active = FALSE THEN 'COMPLETED'
                             WHEN CURRENT_DATE < start_date THEN 'UPCOMING'
                             WHEN CURRENT_DATE > end_date THEN 'COMPLETED'
                             WHEN is_active = TRUE
@@ -2821,12 +3093,24 @@ def calculate_campaign_ratings(
     campaign_id: int,
     current_user: dict = Depends(require_admin),
 ):
+    if not instagram_sync.refresh_campaign(campaign_id, budget=[20], deadline=time.monotonic()+45):
+        raise HTTPException(503, "Waiting for fresh Instagram metrics. Check sync status and retry; stored ratings were retained.")
+    return _calculate_campaign_ratings(campaign_id, current_user)
+
+
+def _calculate_campaign_ratings(
+    campaign_id: int,
+    current_user: dict = Depends(require_admin),
+):
     try:
         with engine.begin() as conn:
 
+            # Serialize manual and scheduled calculations for the same campaign.
+            conn.execute(text('SELECT pg_advisory_xact_lock(826033, :id)'), {'id':campaign_id})
+
             campaign = conn.execute(
                 text("""
-                    SELECT campaign_id, title
+                    SELECT campaign_id, title, end_date, finalized_at
                     FROM campaigns
                     WHERE campaign_id = :campaign_id
                 """),
@@ -2839,6 +3123,10 @@ def calculate_campaign_ratings(
                     detail="Campaign not found."
                 )
 
+            if campaign.finalized_at:
+                return {'message':'Campaign ranking is final and cannot be recalculated.', 'campaign_id':campaign_id, 'ratings':[]}
+            cutoff = campaign_cutoff(campaign)
+            ended = cutoff <= datetime.now(timezone.utc)
             rows = conn.execute(
                 text("""
                     WITH latest_snapshots AS (
@@ -2849,7 +3137,8 @@ def calculate_campaign_ratings(
                             comments_count,
                             shares_count,
                             saves_count
-                        FROM metric_snapshots
+                        FROM instagram_metric_snapshots
+                        WHERE (:cutoff IS NULL OR fetched_at<CAST(:cutoff AS TIMESTAMPTZ))
                         ORDER BY
                             post_id,
                             fetched_at DESC,
@@ -2865,7 +3154,7 @@ def calculate_campaign_ratings(
                         ls.shares_count,
                         ls.saves_count
 
-                    FROM campaign_posts cp
+                    FROM instagram_campaign_posts cp
 
                     JOIN ambassadors a
                         ON a.ambassador_id = cp.ambassador_id
@@ -2877,11 +3166,15 @@ def calculate_campaign_ratings(
                         cp.campaign_id = :campaign_id
                         AND cp.is_verified = TRUE
                         AND a.status = 'ACTIVE'
+                        AND (:cutoff IS NULL OR cp.published_at<CAST(:cutoff AS TIMESTAMPTZ))
                 """),
-                {"campaign_id": campaign_id},
+                {"campaign_id": campaign_id, "cutoff":cutoff if ended else None},
             ).fetchall()
 
             if not rows:
+                if ended:
+                    freeze_campaign(conn,campaign,[])
+                    return {'message':'Campaign finalised without eligible verified metrics.', 'campaign_id':campaign_id, 'ratings':[]}
                 raise HTTPException(
                     status_code=400,
                     detail="No verified campaign metrics are available."
@@ -2997,10 +3290,7 @@ def calculate_campaign_ratings(
                 })
 
             # Highest score first
-            final_scores.sort(
-                key=lambda x: x["score"],
-                reverse=True,
-            )
+            final_scores.sort(key=lambda x: (-x["score"],x["ambassador_id"]))
 
             total = len(final_scores)
 
@@ -3054,6 +3344,7 @@ def calculate_campaign_ratings(
     text("""
         DELETE FROM ambassador_ratings
         WHERE campaign_id = :campaign_id
+          AND ambassador_id IN (SELECT ambassador_id FROM ambassadors WHERE left_at IS NULL)
     """),
     {"campaign_id": campaign_id},
 )
@@ -3103,6 +3394,9 @@ def calculate_campaign_ratings(
                 "campaign",
                 campaign_id,
             )
+            conn.execute(text('UPDATE campaigns SET last_calculated_at=CURRENT_TIMESTAMP WHERE campaign_id=:id'), {'id': campaign_id})
+            if ended:
+                freeze_campaign(conn,campaign,calculated)
 
         return {
             "message":
@@ -3144,6 +3438,7 @@ def get_admin_campaigns(
                         c.start_date,
                         c.end_date,
                         c.is_active,
+                        c.archived_at,
 
                         COUNT(
                             DISTINCT cp.ambassador_id
@@ -3162,7 +3457,7 @@ def get_admin_campaigns(
 
                     FROM campaigns c
 
-                    LEFT JOIN campaign_posts cp
+                    LEFT JOIN instagram_campaign_posts cp
                         ON cp.campaign_id = c.campaign_id
 
                     GROUP BY
@@ -3190,7 +3485,9 @@ def get_admin_campaigns(
                     text("SELECT CURRENT_DATE")
                 ).scalar()
 
-                if today_result < item["start_date"]:
+                if not item["is_active"]:
+                    status = "COMPLETED"
+                elif today_result < item["start_date"]:
                     status = "UPCOMING"
 
                 elif today_result > item["end_date"]:
@@ -3253,6 +3550,7 @@ def preview_admin_campaign(
         recipient_count = conn.execute(text("""
             SELECT COUNT(*)::INT FROM users
             WHERE role = 'AMBASSADOR' AND password_hash IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM ambassadors a WHERE a.user_id=users.user_id AND a.left_at IS NULL AND a.status IN ('ACTIVE','PENDING'))
         """)).scalar_one()
     return {
         "subject": campaign_email_subject(campaign),
@@ -3371,103 +3669,11 @@ def create_admin_campaign(
             detail=f"Failed to create campaign: {e}",
         )
 @app.get("/admin/awards")
-def get_admin_awards(
-    current_user: dict = Depends(require_admin),
-):
-    try:
-        with engine.connect() as conn:
+def get_admin_awards(current_user: dict = Depends(require_admin), campaign_id: int | None = None):
+    data = ranking_page(engine,campaign_id)
+    return {'summary':dict(data['summary'],scoring_eligible=data['total_ranked']), 'awards':data['leaderboard']}
 
-            rows = conn.execute(
-                text("""
-                    WITH latest_ratings AS (
-                        SELECT DISTINCT ON (
-                            ar.ambassador_id,
-                            ar.campaign_id
-                        )
-                            ar.rating_id,
-                            ar.ambassador_id,
-                            ar.campaign_id,
-                            ar.normalized_score,
-                            ar.percentile_rank,
-                            ar.star_rating,
-                            ar.calculated_at
-                        FROM ambassador_ratings ar
-                        ORDER BY
-                            ar.ambassador_id,
-                            ar.campaign_id,
-                            ar.calculated_at DESC,
-                            ar.rating_id DESC
-                    )
 
-                    SELECT
-                        lr.ambassador_id,
-                        lr.campaign_id,
-                        u.full_name,
-                        a.college_name,
-                        a.status,
-                        c.title AS campaign_title,
-                        lr.normalized_score,
-                        lr.percentile_rank,
-                        lr.star_rating,
-                        lr.calculated_at
-
-                    FROM latest_ratings lr
-
-                    JOIN ambassadors a
-                        ON a.ambassador_id = lr.ambassador_id
-
-                    JOIN users u
-                        ON u.user_id = a.user_id
-
-                    JOIN campaigns c
-                        ON c.campaign_id = lr.campaign_id
-
-                    WHERE a.status = 'ACTIVE'
-
-                    ORDER BY
-                        lr.normalized_score DESC,
-                        lr.percentile_rank DESC,
-                        u.full_name ASC
-                """)
-            ).fetchall()
-
-            awards = []
-
-            for index, row in enumerate(rows, start=1):
-                item = dict(row._mapping)
-                item["rank"] = index
-                awards.append(item)
-
-            five_star = sum(
-                1 for item in awards
-                if item["star_rating"] == 5
-            )
-
-            four_star = sum(
-                1 for item in awards
-                if item["star_rating"] == 4
-            )
-
-            three_star = sum(
-                1 for item in awards
-                if item["star_rating"] == 3
-            )
-
-        return {
-            "summary": {
-                "scoring_eligible": len(awards),
-                "five_star": five_star,
-                "four_star": four_star,
-                "three_star": three_star,
-            },
-            "awards": awards,
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load awards: {e}"
-        )
 @app.get("/admin/overview")
 def get_admin_overview(
     current_user: dict = Depends(require_admin),
@@ -3527,7 +3733,7 @@ def get_admin_overview(
                             shares_count,
                             saves_count,
                             fetched_at
-                        FROM metric_snapshots
+                        FROM instagram_metric_snapshots
                         ORDER BY
                             post_id,
                             fetched_at DESC,
@@ -3575,7 +3781,7 @@ def get_admin_overview(
                             0
                         ) AS total_engagements
 
-                    FROM campaign_posts cp
+                    FROM instagram_campaign_posts cp
 
                     LEFT JOIN latest_snapshots ls
                         ON ls.post_id = cp.post_id
@@ -3650,7 +3856,7 @@ def get_admin_overview(
                             ms.post_id,
                             ms.reach_count,
                             ms.fetched_at
-                        FROM metric_snapshots ms
+                        FROM instagram_metric_snapshots ms
                         ORDER BY
                             ms.post_id,
                             ms.fetched_at DESC,
@@ -3666,7 +3872,7 @@ def get_admin_overview(
 
                     FROM latest_snapshots ls
 
-                    JOIN campaign_posts cp
+                    JOIN instagram_campaign_posts cp
                         ON cp.post_id = ls.post_id
 
                     WHERE cp.is_verified = TRUE
@@ -3700,7 +3906,7 @@ def get_admin_overview(
                         cp.platform,
                         c.title AS campaign_title,
                         cp.published_at
-                    FROM campaign_posts cp
+                    FROM instagram_campaign_posts cp
 
                     JOIN ambassadors a
                         ON a.ambassador_id = cp.ambassador_id
@@ -3857,7 +4063,7 @@ def get_admin_analytics(
                             ms.saves_count,
                             ms.views_impressions,
                             ms.fetched_at
-                        FROM metric_snapshots ms
+                        FROM instagram_metric_snapshots ms
                         ORDER BY
                             ms.post_id,
                             ms.fetched_at DESC,
@@ -3880,7 +4086,7 @@ def get_admin_analytics(
                         ls.views_impressions,
                         ls.fetched_at
 
-                    FROM campaign_posts cp
+                    FROM instagram_campaign_posts cp
 
                     JOIN ambassadors a
                         ON a.ambassador_id = cp.ambassador_id
@@ -4139,7 +4345,7 @@ def get_admin_analytics(
                             ms.post_id,
                             ms.reach_count,
                             ms.fetched_at
-                        FROM metric_snapshots ms
+                        FROM instagram_metric_snapshots ms
                         ORDER BY
                             ms.post_id,
                             ms.fetched_at DESC,
@@ -4155,7 +4361,7 @@ def get_admin_analytics(
 
                     FROM latest_snapshots ls
 
-                    JOIN campaign_posts cp
+                    JOIN instagram_campaign_posts cp
                         ON cp.post_id = ls.post_id
 
                     WHERE cp.is_verified = TRUE
@@ -4223,3 +4429,13 @@ def get_admin_analytics(
             status_code=500,
             detail=f"Failed to load analytics: {e}"
         )
+
+
+import sys as _sys
+from workflows import install_workflows
+install_workflows(_sys.modules[__name__])
+from instagram_sync import install_sync
+from service_adapters import ServiceAPI
+instagram_sync = install_sync(ServiceAPI(_sys.modules[__name__]))
+from rankings import install_rankings
+install_rankings(_sys.modules[__name__])
