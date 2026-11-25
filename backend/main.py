@@ -248,7 +248,7 @@ def get_valid_instagram_token(ambassador_id: int, conn) -> str:
                 },
             )
         except requests.RequestException:
-            # Refresh failed â€” fall back to the still-valid existing token
+            # Refresh failed — fall back to the still-valid existing token
             # rather than failing the whole request.
             pass
 
@@ -265,7 +265,7 @@ def _normalize_permalink(url: str) -> str:
 def resolve_instagram_media_id(access_token: str, post_url: str) -> str:
     """
     The Graph API only returns media the authenticated professional
-    account owns, and only by internal media ID â€” there's no endpoint
+    account owns, and only by internal media ID — there's no endpoint
     to resolve a public post URL to that ID directly. We page through
     the account's own media and match on permalink.
     """
@@ -1652,7 +1652,7 @@ def instagram_callback(
         return redirect_with_error(str(e.detail))
 
     try:
-        # Step 1 â€” exchange the authorization code for a short-lived
+        # Step 1 — exchange the authorization code for a short-lived
         # (1 hour) token.
         token_response = requests.post(
             "https://api.instagram.com/oauth/access_token",
@@ -1669,7 +1669,7 @@ def instagram_callback(
         token_data = token_response.json()
         short_lived_token = token_data["access_token"]
 
-        # Step 2 â€” exchange for a long-lived token (~60 days).
+        # Step 2 — exchange for a long-lived token (~60 days).
         exchange_response = requests.get(
             "https://graph.instagram.com/access_token",
             params={
@@ -1684,7 +1684,7 @@ def instagram_callback(
         long_lived_token = exchange_data["access_token"]
         expires_in_seconds = exchange_data.get("expires_in", 60 * 24 * 60 * 60)
 
-        # Step 3 â€” fetch the connected professional account's profile.
+        # Step 3 — fetch the connected professional account's profile.
         profile_response = requests.get(
             "https://graph.instagram.com/me",
             params={
